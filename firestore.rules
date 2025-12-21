@@ -1,0 +1,104 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Users collection - users can only access their own data
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+      
+      // Cart subcollection
+      match /cart/{cartId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+      
+      // Borrow history subcollection
+      match /borrowHistory/{borrowId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+        allow create: if isAuthenticated(); // Allow creating borrow records
+      }
+    }
+    
+    // Books collection - readable by all, writable by admins
+    match /books/{bookId} {
+      allow read: if true; // Public read access
+      allow write: if isAdmin();
+      
+      // Borrow history subcollection
+      match /borrowHistory/{borrowId} {
+        allow read: if true; // Anyone can see borrow history for transparency
+        allow write: if isAdmin();
+        allow create: if isAuthenticated(); // Allow users to create borrow records
+      }
+    }
+    
+    // Handbags collection - readable by all, writable by admins
+    match /handbags/{handbagId} {
+      allow read: if true; // Public read access
+      allow write: if isAdmin();
+      
+      // Sales history subcollection
+      match /salesHistory/{saleId} {
+        allow read: if true; // Public for transparency
+        allow write: if isAdmin();
+        allow create: if isAuthenticated(); // Allow creating sales when purchasing
+      }
+      
+      // Reviews subcollection
+      match /reviews/{reviewId} {
+        allow read: if true; // Public read access
+        allow create: if isAuthenticated(); // Users can add reviews
+        allow update: if isOwner(resource.data.userId) || isAdmin(); // Users can edit their own reviews
+        allow delete: if isAdmin(); // Only admins can delete reviews
+      }
+    }
+    
+    // Orders collection - accessible by order owner and admins
+    match /orders/{orderId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isAuthenticated(); // Users can create orders
+      allow update: if isAdmin(); // Only admins can update order status
+      allow delete: if isAdmin(); // Only admins can delete orders
+    }
+    
+    // Donations collection - accessible by donor and admins
+    match /donations/{donationId} {
+      allow read: if isOwner(resource.data.donorId) || isAdmin();
+      allow create: if isAuthenticated(); // Users can create donations
+      allow update: if isOwner(resource.data.donorId) || isAdmin(); // Donors can edit pending donations, admins can update status
+      allow delete: if isAdmin(); // Only admins can delete donations
+    }
+    
+    // Admin-only collections for configuration and management
+    match /config/{configId} {
+      allow read, write: if isAdmin();
+    }
+    
+    match /analytics/{analyticsId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // System logs (read-only for admins)
+    match /logs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false; // System-generated only
+    }
+    
+    // Fallback rule - deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

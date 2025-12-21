@@ -1,0 +1,32 @@
+{
+  "name": "ngo-portal",
+  "version": "1.0.0",
+  "description": "Complete NGO Portal - MERN Stack Application",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd backend && npm run dev",
+    "client": "cd frontend && npm start",
+    "install-server": "cd backend && npm install",
+    "install-client": "cd frontend && npm install",
+    "install-all": "npm run install-server && npm run install-client",
+    "start": "cd backend && npm start",
+    "build": "cd frontend && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "keywords": [
+    "ngo",
+    "mern",
+    "react",
+    "express",
+    "mongodb",
+    "portal"
+  ],
+  "author": "NGO Portal Team",
+  "license": "MIT",
+  "dependencies": {
+    "firebase": "^12.7.0"
+  }
+}
