@@ -125,6 +125,25 @@ const Footer = () => {
           </div>
         </div>
       </div>
+
+      {/* Bottom bar */}
+      <div className="border-t border-gray-800 mt-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between text-sm text-gray-400">
+          <div>
+            © {currentYear} Shikher Foundation. All rights reserved.
+          </div>
+          <div>
+            Created by:&nbsp;
+            <a href="https://www.linkedin.com/in/aditi-lad-9006b62a8/" target="_blank" rel="noopener noreferrer" className="hover:text-white underline">
+              Aditi Lad
+            </a>
+            &nbsp;&amp;&nbsp;
+            <a href="https://www.linkedin.com/in/nikunj-maru-a52ba528a/" target="_blank" rel="noopener noreferrer" className="hover:text-white underline">
+              Nikunj Maru
+            </a>
+          </div>
+        </div>
+      </div>
     </footer>
   );
 };

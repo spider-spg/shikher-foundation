@@ -24,6 +24,7 @@ const Cart = () => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [orderConfirmed, setOrderConfirmed] = useState(false);
   const [showShippingForm, setShowShippingForm] = useState(false);
+  const [showPhoneInput, setShowPhoneInput] = useState(false);
   const [shippingAddress, setShippingAddress] = useState({ fullName: '', address: '', city: '', state: '', zipCode: '' });
   
   const { 
@@ -75,7 +76,8 @@ const Cart = () => {
       toast.error('Your cart is empty');
       return;
     }
-    setShowShippingForm(true);
+    // For pickup-only flow, show phone input first
+    setShowPhoneInput(true);
   };
 
   const loadRazorpayScript = () => {
@@ -91,14 +93,7 @@ const Cart = () => {
   };
 
   const handleCreateOrderAndPay = async () => {
-    // Validate shipping info
-    const required = ['fullName', 'address', 'city', 'state', 'zipCode'];
-    for (const f of required) {
-      if (!shippingAddress[f]) {
-        toast.error(`${f} is required`);
-        return;
-      }
-    }
+    // Validate phone for pickup flow. If shipping form is used, backend will accept shippingAddress too.
     if (!phoneNumber || phoneNumber.length < 10) {
       toast.error('Please enter a valid phone number');
       return;
@@ -107,13 +102,13 @@ const Cart = () => {
     setProcessingPayment(true);
     try {
       // Create order on backend which will also create Razorpay order
-      const payload = {
-        shippingAddress: {
-          ...shippingAddress,
-          phone: phoneNumber
-        },
-        paymentMethod: 'razorpay'
-      };
+      const payload = { paymentMethod: 'razorpay' };
+      if (showShippingForm) {
+        payload.shippingAddress = { ...shippingAddress, phone: phoneNumber };
+      } else {
+        // pickup-only: include phone under `pickupPhone` to be handled server-side
+        payload.pickupPhone = phoneNumber;
+      }
 
       const res = await api.post('/orders/create', payload);
       if (!res.data || !res.data.success) {

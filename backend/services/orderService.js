@@ -131,6 +131,9 @@ const getOrders = async (filters = {}) => {
       orderData.totalItems = orderData.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0;
       orderData.isDelivered = orderData.orderStatus === 'delivered';
       orderData.isPaid = orderData.paymentInfo?.paymentStatus === 'completed';
+      // Expose top-level paymentStatus and paymentMethod for frontend convenience
+      orderData.paymentStatus = orderData.paymentInfo?.paymentStatus || orderData.paymentMethod || 'pending';
+      orderData.paymentMethod = orderData.paymentInfo?.paymentMethod || orderData.paymentMethod || null;
 
       // Serialize pickupOTP timestamps for client consumption
       if (orderData.pickupOTP) {
@@ -249,6 +252,9 @@ const getOrderById = async (orderId) => {
     orderData.totalItems = orderData.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0;
     orderData.isDelivered = orderData.orderStatus === 'delivered';
     orderData.isPaid = orderData.paymentInfo?.paymentStatus === 'completed';
+    // Expose top-level paymentStatus/paymentMethod for frontend convenience
+    orderData.paymentStatus = orderData.paymentInfo?.paymentStatus || orderData.paymentMethod || 'pending';
+    orderData.paymentMethod = orderData.paymentInfo?.paymentMethod || orderData.paymentMethod || null;
 
     return orderData;
   } catch (error) {

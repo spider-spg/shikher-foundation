@@ -266,15 +266,25 @@ const createMockOrderController = async (req, res) => {
 // @access  Private (Customer only)
 const createOrderController = async (req, res) => {
   try {
-    const { shippingAddress, paymentMethod = 'razorpay' } = req.body;
+    const { shippingAddress, pickupPhone, paymentMethod = 'razorpay' } = req.body;
 
-    // Validate shipping address
-    const requiredFields = ['fullName', 'address', 'city', 'state', 'zipCode', 'phone'];
-    for (const field of requiredFields) {
-      if (!shippingAddress[field]) {
+    // Validate input depending on flow: shippingAddress (delivery) or pickupPhone (pickup-only)
+    if (shippingAddress && Object.keys(shippingAddress).length > 0) {
+      const requiredFields = ['fullName', 'address', 'city', 'state', 'zipCode', 'phone'];
+      for (const field of requiredFields) {
+        if (!shippingAddress[field]) {
+          return res.status(400).json({
+            success: false,
+            message: `${field} is required in shipping address`
+          });
+        }
+      }
+    } else {
+      // pickup-only flow requires a phone number
+      if (!pickupPhone || String(pickupPhone).trim().length < 10) {
         return res.status(400).json({
           success: false,
-          message: `${field} is required in shipping address`
+          message: 'pickupPhone is required for pickup orders and must be a valid phone number'
         });
       }
     }
@@ -341,11 +351,17 @@ const createOrderController = async (req, res) => {
       userEmail: req.user.email,
       items: orderItems,
       totalAmount: finalAmount,
-      shippingAddress,
       paymentMethod,
       shippingCost,
       tax
     };
+
+    // Attach shipping or pickup contact
+    if (shippingAddress && Object.keys(shippingAddress).length > 0) {
+      orderData.shippingAddress = shippingAddress;
+    } else {
+      orderData.pickupPhone = pickupPhone;
+    }
 
     // Create order using service
     const order = await createOrder(orderData);
@@ -451,6 +467,26 @@ const verifyPayment = async (req, res) => {
       paymentStatus: 'completed'
     });
 
+    // Clear user's cart after successful payment to ensure items are removed server-side
+    try {
+      await clearCart(req.user.uid);
+    } catch (clearErr) {
+      console.warn('verifyPayment: failed to clear cart for user', req.user.uid, clearErr);
+      // don't fail the whole request if cart clearing fails
+    }
+
+    // Defensive: paymentInfo may be missing depending on service implementation or webhook updates
+    if (!updatedOrder) {
+      console.error('Verify payment: processPayment returned undefined for order', req.params.id);
+      return res.status(500).json({ success: false, message: 'Failed to process payment' });
+    }
+
+    if (!updatedOrder.paymentInfo) {
+      console.warn('Verify payment: updatedOrder.paymentInfo is undefined', { orderId: updatedOrder.id });
+    }
+
+    const paymentStatusValue = updatedOrder.paymentInfo?.paymentStatus || updatedOrder.paymentInfo?.status || 'unknown';
+
     res.json({
       success: true,
       message: 'Payment verified and order completed successfully',
@@ -458,7 +494,7 @@ const verifyPayment = async (req, res) => {
         id: updatedOrder.id,
         orderNumber: updatedOrder.orderNumber,
         orderStatus: updatedOrder.orderStatus,
-        paymentStatus: updatedOrder.paymentInfo.paymentStatus,
+        paymentStatus: paymentStatusValue,
         trackingId: updatedOrder.trackingId
       }
     });
