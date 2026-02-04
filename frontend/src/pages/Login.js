@@ -59,10 +59,15 @@ const Login = () => {
       const result = await login(formData.email, formData.password);
       
       if (result && result.success) {
+        console.log('Login result:', result);
         toast.success('Welcome back!');
-        
-        // Redirect based on user role
-        if (result.user && result.user.role === 'admin') {
+
+        // Redirect based on user role. Fall back to matching admin email case-insensitively
+        const returnedRole = result.user?.role;
+        const adminEmailEnv = (process.env.REACT_APP_ADMIN_EMAIL || '').toLowerCase();
+        const enteredEmail = (formData.email || '').toLowerCase();
+
+        if (returnedRole === 'admin' || (adminEmailEnv && enteredEmail === adminEmailEnv)) {
           navigate('/admin/dashboard');
         } else {
           navigate('/');

@@ -166,11 +166,13 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     try {
       dispatch({ type: ActionTypes.SET_LOADING, payload: true });
-      
-      // Check for admin login via backend first
-      if (email === process.env.REACT_APP_ADMIN_EMAIL) {
+      // Check for admin login via backend first (case-insensitive)
+      const adminEmailEnv = (process.env.REACT_APP_ADMIN_EMAIL || '').toLowerCase();
+      const enteredEmail = (email || '').toLowerCase();
+      if (enteredEmail === adminEmailEnv && adminEmailEnv) {
         try {
           const response = await authAPI.login({ email, password });
+          console.log('Admin login response:', response && response.data);
           if (response.data.success && response.data.customToken) {
             // Use custom token to sign in
             await signInWithCustomToken(auth, response.data.customToken);

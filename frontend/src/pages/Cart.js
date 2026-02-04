@@ -76,8 +76,9 @@ const Cart = () => {
       toast.error('Your cart is empty');
       return;
     }
-    // For pickup-only flow, show phone input first
+    // Show phone + shipping form before payment
     setShowPhoneInput(true);
+    setShowShippingForm(true);
   };
 
   const loadRazorpayScript = () => {
@@ -93,10 +94,21 @@ const Cart = () => {
   };
 
   const handleCreateOrderAndPay = async () => {
-    // Validate phone for pickup flow. If shipping form is used, backend will accept shippingAddress too.
-    if (!phoneNumber || phoneNumber.length < 10) {
+    // Validate phone
+    if (!phoneNumber || phoneNumber.trim().length < 10) {
       toast.error('Please enter a valid phone number');
       return;
+    }
+
+    // If shipping form is visible, validate shipping fields
+    if (showShippingForm) {
+      const required = ['fullName', 'address', 'city', 'state', 'zipCode'];
+      for (const f of required) {
+        if (!shippingAddress[f] || String(shippingAddress[f]).trim().length === 0) {
+          toast.error(`${f} is required`);
+          return;
+        }
+      }
     }
 
     setProcessingPayment(true);
@@ -106,7 +118,6 @@ const Cart = () => {
       if (showShippingForm) {
         payload.shippingAddress = { ...shippingAddress, phone: phoneNumber };
       } else {
-        // pickup-only: include phone under `pickupPhone` to be handled server-side
         payload.pickupPhone = phoneNumber;
       }
 
@@ -378,22 +389,76 @@ const Cart = () => {
                     </button>
                   ) : (
                     <div className="space-y-3 mt-6">
-                      <div className="text-sm text-gray-700">Enter contact number for pickup</div>
+                      <div className="text-sm text-gray-700">Contact & Shipping details</div>
 
-                      <div className="space-y-2">
-                        <input
-                          type="tel"
-                          placeholder="Phone number"
-                          value={phoneNumber}
-                          onChange={(e) => setPhoneNumber(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                          maxLength={10}
-                        />
-                      </div>
+                      {showShippingForm && (
+                        <div className="space-y-2">
+                          <input
+                            type="text"
+                            placeholder="Full name"
+                            value={shippingAddress.fullName}
+                            onChange={(e) => setShippingAddress({ ...shippingAddress, fullName: e.target.value })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Address"
+                            value={shippingAddress.address}
+                            onChange={(e) => setShippingAddress({ ...shippingAddress, address: e.target.value })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              type="text"
+                              placeholder="City"
+                              value={shippingAddress.city}
+                              onChange={(e) => setShippingAddress({ ...shippingAddress, city: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                            />
+                            <input
+                              type="text"
+                              placeholder="State"
+                              value={shippingAddress.state}
+                              onChange={(e) => setShippingAddress({ ...shippingAddress, state: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              type="text"
+                              placeholder="Zip code"
+                              value={shippingAddress.zipCode}
+                              onChange={(e) => setShippingAddress({ ...shippingAddress, zipCode: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                            />
+                            <input
+                              type="tel"
+                              placeholder="Phone number"
+                              value={phoneNumber}
+                              onChange={(e) => setPhoneNumber(e.target.value)}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                              maxLength={10}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {!showShippingForm && (
+                        <div className="space-y-2">
+                          <input
+                            type="tel"
+                            placeholder="Phone number"
+                            value={phoneNumber}
+                            onChange={(e) => setPhoneNumber(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                            maxLength={10}
+                          />
+                        </div>
+                      )}
 
                       <div className="flex space-x-2">
                         <button
-                          onClick={() => setShowPhoneInput(false)}
+                          onClick={() => { setShowPhoneInput(false); setShowShippingForm(false); }}
                           className="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                         >
                           Cancel
