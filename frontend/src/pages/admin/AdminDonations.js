@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import PhoneLink from '../../components/PhoneLink';
 import { useNavigate } from 'react-router-dom';
 import { 
   FaGift, 
@@ -16,8 +17,11 @@ import {
   FaTimes,
   FaHeart,
   FaBook,
-  FaShoppingBag,
-  FaUser
+  FaTshirt,
+  FaGamepad,
+  FaPen,
+  FaUser,
+  FaPhoneAlt
 } from 'react-icons/fa';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'react-hot-toast';
@@ -39,8 +43,7 @@ const AdminDonations = () => {
     approved: 0,
     rejected: 0,
     received: 0,
-    bookDonations: 0,
-    otherDonations: 0
+    byCategory: {}
   });
   
   const { isAdmin } = useAuth();
@@ -67,10 +70,15 @@ const AdminDonations = () => {
         const approved = allDonations.filter(d => d?.status === 'approved').length;
         const rejected = allDonations.filter(d => d?.status === 'rejected').length;
         const received = allDonations.filter(d => d?.status === 'received').length;
-        const bookDonations = allDonations.filter(d => d?.itemType === 'books').length;
-        const otherDonations = total - bookDonations;
-        
-        setStats({ total, pending, approved, rejected, received, bookDonations, otherDonations });
+
+        // Per-category counts (books, clothes, toys, blankets, stationary, other)
+        const byCategory = {};
+        for (const d of allDonations) {
+          const type = (d?.itemType || 'other').toLowerCase();
+          byCategory[type] = (byCategory[type] || 0) + 1;
+        }
+
+        setStats({ total, pending, approved, rejected, received, byCategory });
       } else {
         setDonations([]);
       }
@@ -173,7 +181,7 @@ const AdminDonations = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-7 gap-4 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 mb-8">
           <div className="bg-white rounded-lg shadow-sm p-6">
             <div className="flex items-center">
               <div className="p-3 bg-blue-100 rounded-lg">
@@ -234,29 +242,25 @@ const AdminDonations = () => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <FaBook className="text-blue-600 text-xl" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Books</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.bookDonations}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center">
-              <div className="p-3 bg-pink-100 rounded-lg">
-                <FaShoppingBag className="text-pink-600 text-xl" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm text-gray-600">Other Items</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.otherDonations}</p>
+          {[
+            { key: 'books',     label: 'Books',     icon: FaBook,        color: 'blue' },
+            { key: 'clothes',   label: 'Clothes',    icon: FaTshirt,      color: 'pink' },
+            { key: 'toys',      label: 'Toys',       icon: FaGamepad,     color: 'purple' },
+            { key: 'blankets',  label: 'Blankets',   icon: FaGift,        color: 'orange' },
+            { key: 'stationary', label: 'Stationery', icon: FaPen,        color: 'teal' },
+          ].map(({ key, label, icon: Icon, color }) => (
+            <div key={key} className="bg-white rounded-lg shadow-sm p-6">
+              <div className="flex items-center">
+                <div className={`p-3 bg-${color}-100 rounded-lg`}>
+                  <Icon className={`text-${color}-600 text-xl`} />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm text-gray-600">{label}</p>
+                  <p className="text-2xl font-bold text-gray-900">{stats.byCategory[key] || 0}</p>
+                </div>
               </div>
             </div>
-          </div>
+          ))}
         </div>
 
         {/* Filters and Search */}
@@ -339,9 +343,11 @@ const AdminDonations = () => {
                             <div className="text-sm font-medium text-gray-900">
                               {donation.donorName || 'Anonymous'}
                             </div>
-                            <div className="text-sm text-gray-500">
-                              {donation.donorEmail}
-                            </div>
+                            {donation.donorPhone && (
+                              <div className="mt-0.5">
+                                <PhoneLink phone={donation.donorPhone} className="text-sm" />
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -457,8 +463,12 @@ const AdminDonations = () => {
                 <div className="space-y-4">
                   <div>
                     <h4 className="font-medium text-gray-900">Donor Information</h4>
-                    <p className="text-sm text-gray-600">Name: {selectedDonation.donorName}</p>
-                    <p className="text-sm text-gray-600">Email: {selectedDonation.donorEmail}</p>
+                    <p className="text-sm text-gray-600">Name: {selectedDonation.donorName || 'Anonymous'}</p>
+                    {selectedDonation.donorPhone && (
+                      <div className="mt-0.5">
+                        <PhoneLink phone={selectedDonation.donorPhone} className="text-sm" />
+                      </div>
+                    )}
                   </div>
 
                   <div>

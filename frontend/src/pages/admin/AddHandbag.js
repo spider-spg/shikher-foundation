@@ -18,7 +18,8 @@ const AddHandbag = () => {
     { value: 'Small', price: 20 },
     { value: 'Medium', price: 30 },
     { value: 'Large', price: 100 },
-    { value: 'Extra Large', price: 150 }
+    { value: 'Extra Large', price: 150 },
+    { value: 'Custom', price: null }
   ];
 
   const handleInputChange = (e) => {
@@ -32,11 +33,12 @@ const AddHandbag = () => {
   const handleSizeChange = (e) => {
     const selectedSize = e.target.value;
     const sizeOption = sizeOptions.find(option => option.value === selectedSize);
-    
+
     setFormData(prev => ({
       ...prev,
       size: selectedSize,
-      price: sizeOption ? sizeOption.price.toString() : ''
+      // For Custom, clear price so admin can type their own; otherwise auto-fill
+      price: sizeOption && sizeOption.price !== null ? sizeOption.price.toString() : ''
     }));
   };
 
@@ -57,6 +59,12 @@ const AddHandbag = () => {
     // Validate required fields on frontend
     if (!formData.title || !formData.size || !formData.quantity) {
       alert('Please fill in all required fields: Title, Size, and Quantity');
+      setLoading(false);
+      return;
+    }
+
+    if (formData.size === 'Custom' && (!formData.price || parseFloat(formData.price) <= 0)) {
+      alert('Please enter a valid custom price');
       setLoading(false);
       return;
     }
@@ -153,25 +161,30 @@ const AddHandbag = () => {
                     <option value="">Select size</option>
                     {sizeOptions.map((option) => (
                       <option key={option.value} value={option.value}>
-                        {option.value} - ₹{option.price}
+                        {option.price !== null ? `${option.value} - ₹${option.price}` : `${option.value} (set your own price)`}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                {/* Price (Auto-filled based on size) */}
+                {/* Price (Auto-filled based on size, editable for Custom) */}
                 <div>
                   <label htmlFor="price" className="block text-sm font-medium text-gray-700 mb-2">
-                    Price (Auto-set based on size)
+                    {formData.size === 'Custom' ? 'Price *' : 'Price (Auto-set based on size)'}
                   </label>
                   <input
                     type="number"
                     id="price"
                     name="price"
                     value={formData.price}
-                    readOnly
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
-                    placeholder="Price will be set based on size"
+                    onChange={handleInputChange}
+                    readOnly={formData.size !== 'Custom'}
+                    min="0"
+                    step="0.01"
+                    className={`w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all duration-200 ${
+                      formData.size !== 'Custom' ? 'bg-gray-100 cursor-not-allowed' : ''
+                    }`}
+                    placeholder={formData.size === 'Custom' ? 'Enter custom price' : 'Price will be set based on size'}
                   />
                 </div>
 

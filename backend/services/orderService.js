@@ -292,6 +292,9 @@ const updateOrderStatus = async (orderId, newStatus, note = '', additionalData =
         throw new Error('Order not found');
       }
 
+      const currentStatus = orderDoc.data().orderStatus || orderDoc.data().status;
+      const alreadyPickedUp = currentStatus === 'PICKED_UP';
+
       const updateData = {
         orderStatus: newStatus,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -310,6 +313,34 @@ const updateOrderStatus = async (orderId, newStatus, note = '', additionalData =
 
       transaction.update(orderRef, updateData);
 
+      // ── Record real sale ONLY when the customer actually picks up the order ──
+      // This is the single source of truth for "units sold" and "revenue
+      // generated" on the dashboard. Placing an order (PAID_PENDING_PICKUP)
+      // already reserved/decremented stock, but that's not a completed sale —
+      // a customer could still no-show, get marked EXPIRED, or CANCELLED.
+      // Only a genuine pickup counts as money actually earned.
+      if (newStatus === 'PICKED_UP' && !alreadyPickedUp) {
+        const orderData = orderDoc.data();
+        const items = orderData.items || [];
+
+        items.forEach(item => {
+          const handbagId = item.handbagId || item.handbag?.id || item.id;
+          if (!handbagId) return;
+
+          const salesHistoryRef = firestore
+            .collection('handbags').doc(handbagId)
+            .collection('salesHistory').doc();
+
+          transaction.set(salesHistoryRef, {
+            orderId,
+            userId: orderData.userId,
+            quantity: item.quantity || 1,
+            salePrice: item.price || 0,
+            soldAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+        });
+      }
+
       // Add status history record
       const statusHistoryRef = firestore.collection('orders').doc(orderId).collection('statusHistory').doc();
       transaction.set(statusHistoryRef, {
@@ -322,34 +353,6 @@ const updateOrderStatus = async (orderId, newStatus, note = '', additionalData =
     });
   } catch (error) {
     console.error('Error updating order status:', error);
-    throw error;
-  }
-};
-
-// Mark order as paid
-const markOrderAsPaid = async (orderId, transactionId, paymentMethod = 'razorpay') => {
-  try {
-    const orderRef = firestore.collection('orders').doc(orderId);
-    
-    const updateData = {
-      'paymentInfo.paymentStatus': 'completed',
-      'paymentInfo.transactionId': transactionId,
-      'paymentInfo.paymentMethod': paymentMethod,
-      'paymentInfo.paidAt': admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-
-    await orderRef.update(updateData);
-
-    // Update order status to confirmed if it was pending
-    const orderSnap = await orderRef.get();
-    if (orderSnap.exists && orderSnap.data().orderStatus === 'pending') {
-      await updateOrderStatus(orderId, 'confirmed', 'Payment received successfully');
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Error marking order as paid:', error);
     throw error;
   }
 };
@@ -406,9 +409,18 @@ const cancelOrder = async (orderId, refundAmount, reason) => {
       }
 
       const orderData = orderDoc.data();
+      const currentStatus = orderData.orderStatus || orderData.status;
+
+      // Don't allow cancelling an order that's already been picked up,
+      // cancelled, or expired — and don't double-restore stock if so.
+      const nonCancellable = ['PICKED_UP', 'CANCELLED', 'EXPIRED'];
+      if (nonCancellable.includes(currentStatus)) {
+        throw new Error('This order cannot be cancelled');
+      }
 
       transaction.update(orderRef, {
-        orderStatus: 'cancelled',
+        status: 'CANCELLED',
+        orderStatus: 'CANCELLED',
         'paymentInfo.paymentStatus': 'refunded',
         'refund.isRefunded': true,
         'refund.refundAmount': refundAmount || orderData.totalAmount,
@@ -420,21 +432,25 @@ const cancelOrder = async (orderId, refundAmount, reason) => {
       // Add status history
       const statusHistoryRef = firestore.collection('orders').doc(orderId).collection('statusHistory').doc();
       transaction.set(statusHistoryRef, {
-        status: 'cancelled',
+        status: 'CANCELLED',
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        note: `Refund initiated: ${reason}`
+        note: `Cancelled by customer: ${reason}`
       });
 
-      // Restore handbag quantities
+      // Restore handbag quantities — stock was reserved at add-to-cart time,
+      // so cancelling before pickup must give it back. Items are stored
+      // with `handbagId` (see orderController.createHandbagOrder), not
+      // `handbag` — using the wrong field here silently skipped this block.
       if (orderData.items && orderData.items.length > 0) {
         for (let item of orderData.items) {
-          if (item.handbag) {
-            const handbagRef = firestore.collection('handbags').doc(item.handbag);
+          const handbagId = item.handbagId || item.handbag;
+          if (handbagId) {
+            const handbagRef = firestore.collection('handbags').doc(handbagId);
             const handbagDoc = await transaction.get(handbagRef);
             if (handbagDoc.exists) {
               const handbagData = handbagDoc.data();
               transaction.update(handbagRef, {
-                quantity: handbagData.quantity + item.quantity,
+                quantity: (handbagData.quantity || 0) + (item.quantity || 1),
                 updatedAt: admin.firestore.FieldValue.serverTimestamp()
               });
             }
@@ -450,96 +466,13 @@ const cancelOrder = async (orderId, refundAmount, reason) => {
   }
 };
 
-// Process payment and complete order
-const processPayment = async (orderId, paymentData) => {
-  try {
-    const orderRef = firestore.collection('orders').doc(orderId);
-    const handbagService = require('./handbagService');
-
-    return await firestore.runTransaction(async (transaction) => {
-      const orderDoc = await transaction.get(orderRef);
-      
-      if (!orderDoc.exists) {
-        throw new Error('Order not found');
-      }
-
-      const orderData = orderDoc.data();
-
-      // Re-validate stock availability before processing payment
-      for (const item of orderData.items || []) {
-        const handbag = await handbagService.getHandbagById(item.handbagId);
-        
-        if (!handbag || !handbag.isActive) {
-          throw new Error(`Handbag "${item.title}" is no longer available`);
-        }
-
-        if (handbag.quantity < item.quantity) {
-          throw new Error(`Insufficient stock for "${item.title}". Available: ${handbag.quantity}, Required: ${item.quantity}`);
-        }
-      }
-
-      // BUSINESS RULE: Stock is decremented ONLY after successful payment
-      // Decrement stock for each item
-      for (const item of orderData.items || []) {
-        const handbagRef = firestore.collection('handbags').doc(item.handbagId);
-        const handbagDoc = await transaction.get(handbagRef);
-        
-        if (handbagDoc.exists) {
-          const handbagData = handbagDoc.data();
-          const newQuantity = Math.max(0, (handbagData.quantity || 0) - item.quantity);
-          
-          transaction.update(handbagRef, {
-            quantity: newQuantity,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-          });
-        }
-      }
-
-      // Update order with payment info and set status to PAID_PENDING_PICKUP
-      const updateData = {
-        'paymentInfo.paymentId': paymentData.paymentId,
-        'paymentInfo.paymentMethod': paymentData.paymentMethod,
-        'paymentInfo.paymentStatus': paymentData.paymentStatus,
-        'paymentInfo.paidAt': admin.firestore.FieldValue.serverTimestamp(),
-        orderStatus: 'PAID_PENDING_PICKUP',
-        // Set 7-day pickup window
-        pickupDeadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      };
-
-      transaction.update(orderRef, updateData);
-
-      // Add status history
-      const statusHistoryRef = firestore.collection('orders').doc(orderId).collection('statusHistory').doc();
-      transaction.set(statusHistoryRef, {
-        status: 'PAID_PENDING_PICKUP',
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        note: 'Payment successful. Please call NGO before visiting to collect your order.',
-        updatedBy: 'system'
-      });
-
-      return { 
-        id: orderId, 
-        ...orderData, 
-        ...updateData,
-        orderStatus: 'PAID_PENDING_PICKUP'
-      };
-    });
-  } catch (error) {
-    console.error('Error processing payment:', error);
-    throw error;
-  }
-};
-
 module.exports = {
   createOrder,
   getOrders,
   getOrderById,
   getOrderByTrackingId,
   updateOrderStatus,
-  markOrderAsPaid,
   generateTrackingId,
   setEstimatedDelivery,
-  cancelOrder,
-  processPayment
+  cancelOrder
 };

@@ -1,6 +1,6 @@
-# Shikher Foundation - NGO Portal
+# Shikher Foundations - NGO Portal
 
-A comprehensive full-stack web application for the Shikher Foundation NGO, featuring book lending, handbag sales, donation system, and complete admin management.
+A comprehensive full-stack web application for the Shikher Foundations NGO, featuring book lending, handbag sales, donation system, and complete admin management.
 
 ## 🚀 Features
 
@@ -48,7 +48,7 @@ A comprehensive full-stack web application for the Shikher Foundation NGO, featu
 ### 1. Clone the repository
 ```bash
 git clone <repository-url>
-cd "Shikher Foundation"
+cd "Shikher Foundations"
 ```
 
 ### 2. Install Dependencies
@@ -131,7 +131,7 @@ npm start
 ## 📁 Project Structure
 
 ```
-Shikher Foundation/
+Shikher Foundations/
 ├── backend/
 │   ├── config/
 │   │   └── firebaseAdmin.js         # Firebase admin configuration

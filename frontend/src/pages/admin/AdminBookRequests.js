@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import PhoneLink from '../../components/PhoneLink';
 import { 
   FaBook, 
   FaUser, 
@@ -8,8 +9,8 @@ import {
   FaClock,
   FaMapMarkerAlt,
   FaExclamationTriangle,
-  FaPhoneAlt,
   FaArrowUp,
+  FaPhoneAlt,
   FaArrowDown,
   FaFilter,
   FaSort
@@ -108,7 +109,7 @@ const AdminBookRequests = () => {
     
     const statusConfig = {
       PENDING: { color: 'bg-yellow-100 text-yellow-800', text: 'Pending Review' },
-      ACCEPTED: { color: 'bg-blue-100 text-blue-800', text: 'Accepted - Call for Pickup' },
+      ACCEPTED: { color: 'bg-blue-100 text-blue-800', text: 'Accepted - Wait for call' },
       REJECTED: { color: 'bg-red-100 text-red-800', text: 'Rejected' },
       PICKED_UP: { 
         color: overdueDays > 0 ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800', 
@@ -328,8 +329,13 @@ const AdminBookRequests = () => {
                             </div>
                             <div className="text-sm text-gray-500">
                               <FaUser className="inline mr-1" />
-                              {request.userData?.name || request.userEmail}
+                              {request.userData?.name || request.userName || request.userEmail}
                             </div>
+                            {(request.userPhone || request.userData?.phoneNumber) && (
+                              <div className="mt-0.5">
+                                <PhoneLink phone={request.userPhone || request.userData?.phoneNumber} className="text-sm" />
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -337,12 +343,6 @@ const AdminBookRequests = () => {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex flex-col space-y-1">
                           {getStatusBadge(request.status, request.dueDate)}
-                          {request.status === 'ACCEPTED' && (
-                            <div className="text-xs text-blue-600 flex items-center">
-                              <FaPhoneAlt className="mr-1" />
-                              Call NGO: +91-9324335478
-                            </div>
-                          )}
                         </div>
                       </td>
                       

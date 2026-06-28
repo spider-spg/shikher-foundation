@@ -15,13 +15,16 @@ const getDashboard = async (req, res) => {
       books: {
         total: 0,
         available: 0,
-        borrowed: 0,
+        pendingApproval: 0,  // stock held for PENDING book requests, not yet approved
+        borrowed: 0,         // stock genuinely in customer's hands (PICKED_UP only)
         outOfStock: 0
       },
       handbags: {
         total: 0,
         available: 0,
-        sold: 0,
+        inCarts: 0,          // stock reserved in user carts, not yet ordered
+        sold: 0,             // units from genuinely completed (picked up) orders
+        revenue: 0,          // total revenue from picked-up orders
         outOfStock: 0
       },
       orders: {
@@ -35,7 +38,9 @@ const getDashboard = async (req, res) => {
         total: 0,
         pending: 0,
         approved: 0,
-        completed: 0
+        received: 0,
+        rejected: 0,
+        byType: {}
       },
       users: {
         total: 0,
@@ -57,15 +62,15 @@ const getDashboard = async (req, res) => {
     try {
       const booksSnapshot = await db.collection('books').where('isActive', '==', true).get();
       dashboard.books.total = booksSnapshot.size;
-      
+
       booksSnapshot.docs.forEach(doc => {
         const bookData = doc.data();
-        const quantity = bookData.quantity || 0;
-        const totalQuantity = bookData.totalQuantity || 0;
-        
+        const quantity = parseInt(bookData.quantity, 10) || 0;
+
+        // "Available" is simply the current quantity field — this is accurate
+        // regardless of WHY stock was reduced (pending request, borrowed, etc).
         dashboard.books.available += quantity;
-        dashboard.books.borrowed += Math.max(0, totalQuantity - quantity);
-        
+
         if (quantity === 0) {
           dashboard.books.outOfStock++;
           dashboard.alerts.outOfStockBooks.push({
@@ -86,23 +91,93 @@ const getDashboard = async (req, res) => {
       console.warn('Error fetching books data:', error);
     }
 
+    // Get real book request statuses — this is the source of truth for WHY
+    // a book's stock is reduced, instead of inferring purely from quantity gaps.
+    // Also builds dashboard.bookRequests, which the frontend reads directly.
+    dashboard.bookRequests = { total: 0, pending: 0, awaitingPickup: 0, active: 0, overdue: 0 };
+    try {
+      const bookRequestsSnapshot = await db.collection('bookRequests').get();
+      dashboard.bookRequests.total = bookRequestsSnapshot.size;
+      const now = new Date();
+
+      bookRequestsSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const status = data.status;
+
+        if (status === 'PENDING') {
+          dashboard.books.pendingApproval++;
+          dashboard.bookRequests.pending++;
+        } else if (status === 'ACCEPTED') {
+          // Approved but not yet physically picked up — not "borrowed" yet.
+          dashboard.bookRequests.awaitingPickup++;
+        } else if (status === 'PICKED_UP') {
+          // Only a genuine pickup counts as "borrowed" — this is when the
+          // book is actually in the customer's hands.
+          dashboard.books.borrowed++;
+          dashboard.bookRequests.active++;
+
+          // Check overdue: PICKED_UP with a dueDate in the past
+          if (data.dueDate) {
+            const dueDate = data.dueDate.toDate ? data.dueDate.toDate() : new Date(data.dueDate);
+            if (dueDate < now) {
+              dashboard.bookRequests.overdue++;
+            }
+          }
+        }
+        // REJECTED and RETURNED requests don't hold stock — not counted here
+      });
+    } catch (error) {
+      console.warn('Error fetching book requests data:', error);
+    }
+
     // Get handbags statistics
     try {
       const handbagsSnapshot = await db.collection('handbags').where('isActive', '==', true).get();
       dashboard.handbags.total = handbagsSnapshot.size;
-      
-      handbagsSnapshot.docs.forEach(doc => {
+
+      for (const doc of handbagsSnapshot.docs) {
         const handbagData = doc.data();
-        const quantity = parseInt(handbagData.quantity) || 0;
-        const totalQuantity = parseInt(handbagData.totalQuantity) || quantity;
-        
-        // Ensure totalQuantity is never less than current quantity
-        const adjustedTotalQuantity = Math.max(totalQuantity, quantity);
-        const sold = Math.max(0, adjustedTotalQuantity - quantity);
-        
+        const quantity = parseInt(handbagData.quantity, 10) || 0;
+
+        // "Available" is the current quantity field — accurate regardless of
+        // WHY stock was reduced (sitting in a cart vs. genuinely sold).
         dashboard.handbags.available += quantity;
-        dashboard.handbags.sold += sold;
-        
+
+        // Real units sold come from this handbag's actual salesHistory
+        // (completed orders), not from inferring it off the quantity gap —
+        // stock reserved in someone's cart should NOT count as "sold".
+        try {
+          const salesHistorySnap = await db
+            .collection('handbags').doc(doc.id).collection('salesHistory').get();
+
+          if (salesHistorySnap.size > 0) {
+            // Use salesHistory as source of truth
+            salesHistorySnap.docs.forEach(saleDoc => {
+              const sale = saleDoc.data();
+              dashboard.handbags.sold    += sale.quantity || 1;
+              dashboard.handbags.revenue += (sale.salePrice || 0) * (sale.quantity || 1);
+            });
+          } else {
+            // Backfill: find PICKED_UP orders containing this handbag
+            // (handles orders picked up before salesHistory writing was added)
+            const pickedUpOrdersSnap = await db
+              .collection('orders')
+              .where('status', '==', 'PICKED_UP')
+              .get();
+
+            pickedUpOrdersSnap.docs.forEach(orderDoc => {
+              (orderDoc.data().items || []).forEach(item => {
+                if (item.handbagId === doc.id) {
+                  dashboard.handbags.sold    += item.quantity || 1;
+                  dashboard.handbags.revenue += (item.price || 0) * (item.quantity || 1);
+                }
+              });
+            });
+          }
+        } catch (salesErr) {
+          console.warn(`Error fetching sales history for handbag ${doc.id}:`, salesErr);
+        }
+
         if (quantity === 0) {
           dashboard.handbags.outOfStock++;
           dashboard.alerts.outOfStockHandbags.push({
@@ -120,9 +195,22 @@ const getDashboard = async (req, res) => {
             price: handbagData.price
           });
         }
-      });
+      }
     } catch (error) {
       console.warn('Error fetching handbags data:', error);
+    }
+
+    // Count handbag units currently sitting in any user's cart (reserved,
+    // not yet ordered). Cart items live in a subcollection per user, so a
+    // collection group query is needed to count across all users at once.
+    try {
+      const cartItemsSnapshot = await db.collectionGroup('cart').get();
+      cartItemsSnapshot.docs.forEach(doc => {
+        const cartItem = doc.data();
+        dashboard.handbags.inCarts += parseInt(cartItem.quantity, 10) || 1;
+      });
+    } catch (error) {
+      console.warn('Error fetching cart data:', error);
     }
 
     // Get orders statistics
@@ -138,7 +226,8 @@ const getDashboard = async (req, res) => {
         dashboard.orders.totalRevenue += amount;
         
         switch (status) {
-          case 'PAID_PENDING_PICKUP':
+          case 'PENDING_PICKUP':
+          case 'PAID_PENDING_PICKUP': // legacy support for old orders in Firestore
             dashboard.orders.pending++;
             break;
           case 'PICKED_UP':
@@ -150,26 +239,37 @@ const getDashboard = async (req, res) => {
       console.warn('Error fetching orders data:', error);
     }
 
-    // Get donations statistics
+    // Get donations statistics (all types: books, clothes, toys, stationary)
     try {
-      const donationsSnapshot = await db.collection('donations').where('type', '==', 'book').get();
-      dashboard.donations.total = donationsSnapshot.size;
-      
+      const donationsSnapshot = await db.collection('donations').get();
+
+      // Split byType into accepted (pending/approved/received) and rejected
+      dashboard.donations.byTypeAccepted = {};
+      dashboard.donations.byTypeRejected = {};
+
       donationsSnapshot.docs.forEach(doc => {
         const donationData = doc.data();
-        const status = donationData.status || donationData.donationStatus;
-        
+        const status   = (donationData.status || donationData.donationStatus || '').toLowerCase();
+        const itemType = (donationData.itemType || donationData.type || 'other').toLowerCase();
+
         switch (status) {
-          case 'Pending':
-            dashboard.donations.pending++;
-            break;
-          case 'Approved':
-            dashboard.donations.approved++;
-            break;
-          case 'Added to Library':
-            dashboard.donations.completed++;
-            break;
+          case 'pending':  dashboard.donations.pending++;  break;
+          case 'approved': dashboard.donations.approved++; break;
+          case 'received': dashboard.donations.received = (dashboard.donations.received || 0) + 1; break;
+          case 'rejected': dashboard.donations.rejected = (dashboard.donations.rejected || 0) + 1; break;
         }
+
+        // Total excludes rejected donations
+        if (status !== 'rejected') {
+          dashboard.donations.total++;
+          dashboard.donations.byTypeAccepted[itemType] = (dashboard.donations.byTypeAccepted[itemType] || 0) + 1;
+        } else {
+          dashboard.donations.byTypeRejected[itemType] = (dashboard.donations.byTypeRejected[itemType] || 0) + 1;
+        }
+
+        // Keep byType for backward compat
+        if (!dashboard.donations.byType) dashboard.donations.byType = {};
+        dashboard.donations.byType[itemType] = (dashboard.donations.byType[itemType] || 0) + 1;
       });
     } catch (error) {
       console.warn('Error fetching donations data:', error);
@@ -229,13 +329,48 @@ const getAllBooks = async (req, res) => {
 
     const result = await bookService.getBooks(filters);
 
+    // ── Per-book request status breakdown ───────────────────────────────────
+    // "quantity" drops the moment a request is PLACED (reserves the copy),
+    // so it does NOT by itself tell us whether a book is pending, awaiting
+    // pickup, or genuinely out with a borrower. Pull real counts per status
+    // from bookRequests, the same source of truth the dashboard uses, so
+    // this page and the dashboard never disagree on what "borrowed" means.
+    const requestsSnapshot = await db.collection('bookRequests').get();
+    const statusByBook = {}; // bookId -> { pendingApproval, awaitingPickup, currentlyBorrowed }
+
+    requestsSnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      const bookId = data.bookId;
+      if (!bookId) return;
+
+      if (!statusByBook[bookId]) {
+        statusByBook[bookId] = { pendingApproval: 0, awaitingPickup: 0, currentlyBorrowed: 0 };
+      }
+
+      if (data.status === 'PENDING') {
+        statusByBook[bookId].pendingApproval++;
+      } else if (data.status === 'ACCEPTED') {
+        statusByBook[bookId].awaitingPickup++;
+      } else if (data.status === 'PICKED_UP') {
+        statusByBook[bookId].currentlyBorrowed++;
+      }
+      // REJECTED / RETURNED don't hold a copy — not counted
+    });
+
+    const booksWithStatus = result.books.map(book => ({
+      ...book,
+      pendingApproval: statusByBook[book.id]?.pendingApproval || 0,
+      awaitingPickup: statusByBook[book.id]?.awaitingPickup || 0,
+      currentlyBorrowed: statusByBook[book.id]?.currentlyBorrowed || 0
+    }));
+
     res.json({
       success: true,
-      count: result.books.length,
+      count: booksWithStatus.length,
       total: result.total,
       totalPages: result.totalPages,
       currentPage: result.currentPage,
-      books: result.books
+      books: booksWithStatus
     });
 
   } catch (error) {
@@ -249,67 +384,6 @@ const getAllBooks = async (req, res) => {
 };
 
 // @desc    Get book borrow history
-// @route   GET /api/admin/books/:id/borrow-history
-// @access  Private (Admin only)
-const getBookBorrowHistory = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Validate ID parameter
-    if (!id || id === 'undefined' || id === 'null') {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid book ID provided'
-      });
-    }
-
-    // For now, return mock data since we don't have a borrow tracking system yet
-    // In a real implementation, you would have a BorrowRecord model
-    const mockBorrowHistory = [
-      {
-        _id: '1',
-        user: {
-          _id: '1',
-          name: 'John Doe',
-          email: 'john@example.com'
-        },
-        borrowedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // 7 days ago
-        returnedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
-        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-        status: 'returned',
-        notes: 'Book returned in good condition'
-      },
-      {
-        _id: '2',
-        user: {
-          _id: '2',
-          name: 'Jane Smith',
-          email: 'jane@example.com'
-        },
-        borrowedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
-        returnedAt: null,
-        dueDate: new Date(Date.now() + 11 * 24 * 60 * 60 * 1000), // 11 days from now
-        status: 'active',
-        notes: null
-      }
-    ];
-
-    res.json({
-      success: true,
-      history: mockBorrowHistory,
-      totalRecords: mockBorrowHistory.length
-    });
-
-  } catch (error) {
-    console.error('Get book borrow history error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching borrow history',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
 // @desc    Get single book by ID
 // @route   GET /api/admin/books/:id
 // @access  Private (Admin only)
@@ -336,6 +410,19 @@ const getBookById = async (req, res) => {
     }
 
     const book = { id: bookDoc.id, ...bookDoc.data() };
+
+    // Real per-status counts (same source of truth as dashboard/AdminBooks list)
+    const requestsSnapshot = await db.collection('bookRequests').where('bookId', '==', id).get();
+    let pendingApproval = 0, awaitingPickup = 0, currentlyBorrowed = 0;
+    requestsSnapshot.docs.forEach(doc => {
+      const status = doc.data().status;
+      if (status === 'PENDING') pendingApproval++;
+      else if (status === 'ACCEPTED') awaitingPickup++;
+      else if (status === 'PICKED_UP') currentlyBorrowed++;
+    });
+    book.pendingApproval = pendingApproval;
+    book.awaitingPickup = awaitingPickup;
+    book.currentlyBorrowed = currentlyBorrowed;
 
     res.json({
       success: true,
@@ -381,6 +468,29 @@ const updateBook = async (req, res) => {
     // Handle image update if a new image was uploaded
     if (req.imageData) {
       updateData.imageData = req.imageData;
+    }
+
+    // ── Keep available quantity in sync with totalQuantity ──────────────────
+    // The Edit Book form only exposes "totalQuantity" (admin doesn't see/edit
+    // "available copies" directly, since that's controlled by the
+    // request/accept/return flow). If admin changes totalQuantity, shift the
+    // available `quantity` by the same delta, so reserved/borrowed copies
+    // stay correctly accounted for and `quantity` never ends up exceeding
+    // `totalQuantity` (which was causing availability % to exceed 100%).
+    const book = bookDoc.data();
+    if (updateData.totalQuantity !== undefined) {
+      const newTotalQuantity = parseInt(updateData.totalQuantity);
+      const oldTotalQuantity = parseInt(book.totalQuantity) || 0;
+      const oldQuantity = parseInt(book.quantity) || 0;
+
+      if (!isNaN(newTotalQuantity) && newTotalQuantity >= 0) {
+        const delta = newTotalQuantity - oldTotalQuantity;
+        // Never let available quantity go negative or exceed the new total
+        updateData.quantity = Math.max(0, Math.min(newTotalQuantity, oldQuantity + delta));
+        updateData.totalQuantity = newTotalQuantity;
+      } else {
+        delete updateData.totalQuantity;
+      }
     }
 
     // Add updatedAt timestamp
@@ -507,7 +617,6 @@ const addBook = async (req, res) => {
       totalQuantity,
       genre,
       category,
-      isbn,
       condition,
       language,
       publicationYear,
@@ -521,27 +630,20 @@ const addBook = async (req, res) => {
     const bookQuantity = totalQuantity || quantity;
 
     // Validate required fields with safe checking
-    if (!title?.trim() || !author?.trim() || !description?.trim() || !bookQuantity) {
+    // NOTE: description is intentionally optional (frontend marks it as such)
+    if (!title?.trim() || !author?.trim() || !bookQuantity) {
       return res.status(400).json({
         success: false,
-        message: 'Title, author, description, and quantity are required',
+        message: 'Title, author, and quantity are required',
         received: { title, author, description, quantity: bookQuantity }
       });
-    }
-
-    // Generate unique ISBN if not provided
-    let bookIsbn = isbn;
-    if (!bookIsbn || bookIsbn.trim() === '') {
-      bookIsbn = `MANUAL-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     }
 
     // Handle image data safely - prioritize uploaded file over Google Books URL
     let imageData = null;
     if (req.imageData) {
-      // From uploaded file (processed by middleware)
       imageData = req.imageData;
     } else if (googleBooksImageUrl?.trim()) {
-      // From Google Books API
       imageData = googleBooksImageUrl.trim();
     }
 
@@ -553,13 +655,12 @@ const addBook = async (req, res) => {
 
     const bookData = {
       title: title.trim(),
-      author: author.trim(), 
-      description: description.trim(),
+      author: author.trim(),
+      description: description?.trim() || '',
       imageData,
       quantity: safeParseInt(bookQuantity, 1),
       totalQuantity: safeParseInt(bookQuantity, 1),
       genre: category?.trim() || genre?.trim() || 'Other',
-      isbn: bookIsbn.trim(),
       condition: condition?.trim() || 'Good',
       language: language?.trim() || 'English',
       publicationYear: publicationYear ? safeParseInt(publicationYear) : null,
@@ -587,13 +688,6 @@ const addBook = async (req, res) => {
     });
 
     // Handle Firestore-specific errors
-    if (error.code === 6) { // ALREADY_EXISTS
-      return res.status(400).json({
-        success: false,
-        message: 'A book with this ISBN already exists'
-      });
-    }
-
     if (error.code === 3) { // INVALID_ARGUMENT
       return res.status(400).json({
         success: false,
@@ -616,30 +710,6 @@ const addBook = async (req, res) => {
       message: 'Error adding book to database',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
       timestamp: new Date().toISOString()
-    });
-  }
-};
-
-// @desc    Get book by ISBN
-// @route   GET /api/admin/books/isbn/:isbn
-// @access  Private (Admin only)
-const getBookByISBN = async (req, res) => {
-  try {
-    const { isbn } = req.params;
-
-    // Use Firebase service to get book by ISBN
-    // For now, return a placeholder response since the service needs to be enhanced
-    res.json({
-      success: false,
-      message: 'ISBN search not implemented for Firebase yet'
-    });
-
-  } catch (error) {
-    console.error('Get book by ISBN error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching book by ISBN',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -1052,9 +1122,9 @@ const updateOrderStatus = async (req, res) => {
 
     // BUSINESS RULE: Valid statuses for handbag orders
     const validStatuses = [
-      'PAID_PENDING_PICKUP', 
-      'PICKED_UP', 
-      'EXPIRED', 
+      'PENDING_PICKUP',
+      'PICKED_UP',
+      'EXPIRED',
       'CANCELLED'
     ];
     
@@ -1083,28 +1153,35 @@ const updateOrderStatus = async (req, res) => {
     }
 
     const orderData = orderDoc.data();
+    const currentStatus = orderData.status || orderData.orderStatus;
 
-    // BUSINESS RULE: If order expires, restore stock
-    if (status === 'EXPIRED' && (orderData.orderStatus === 'PAID_PENDING_PICKUP' || orderData.status === 'PAID_PENDING_PICKUP')) {
-      // Restore stock for expired orders
+    // BUSINESS RULE: Restore stock when order is EXPIRED or CANCELLED
+    // Only restore if it hasn't been picked up (stock was already consumed at order creation)
+    const shouldRestoreStock =
+      (status === 'EXPIRED' || status === 'CANCELLED') &&
+      currentStatus !== 'PICKED_UP' &&
+      currentStatus !== 'EXPIRED' &&
+      currentStatus !== 'CANCELLED';
+
+    if (shouldRestoreStock) {
       const batch = db.batch();
-      
+
       for (const item of orderData.items || []) {
+        if (!item.handbagId) continue;
         const handbagRef = db.collection('handbags').doc(item.handbagId);
         const handbagDoc = await handbagRef.get();
-        
+
         if (handbagDoc.exists) {
-          const handbagData = handbagDoc.data();
-          const restoredQuantity = (handbagData.quantity || 0) + item.quantity;
-          
+          const restoredQuantity = (handbagDoc.data().quantity || 0) + (item.quantity || 1);
           batch.update(handbagRef, {
             quantity: restoredQuantity,
             updatedAt: FieldValue.serverTimestamp()
           });
         }
       }
-      
+
       await batch.commit();
+      console.log(`Stock restored for order ${req.params.id} (${status})`);
     }
 
     // Update order status (update both fields for compatibility)
@@ -1149,10 +1226,10 @@ const updateOrderStatus = async (req, res) => {
 // Helper function to get default status messages
 const getStatusMessage = (status) => {
   const messages = {
-    'PAID_PENDING_PICKUP': 'Order paid. Please call NGO before visiting to collect.',
-    'PICKED_UP': 'Order successfully picked up by customer.',
-    'EXPIRED': 'Order expired. Pickup window closed.',
-    'CANCELLED': 'Order cancelled.'
+    'PENDING_PICKUP': 'Order confirmed. Please call NGO to schedule pickup.',
+    'PICKED_UP':      'Order successfully picked up by customer.',
+    'EXPIRED':        'Order expired. Stock has been restored.',
+    'CANCELLED':      'Order cancelled. Stock has been restored.'
   };
   return messages[status] || `Status updated to ${status}`;
 };
@@ -1164,9 +1241,9 @@ const checkExpiredOrders = async (req, res) => {
   try {
     const now = new Date();
     
-    // Find all orders that are PAID_PENDING_PICKUP and past deadline
+    // Find all orders that are PENDING_PICKUP and past deadline
     const ordersSnapshot = await db.collection('orders')
-      .where('orderStatus', '==', 'PAID_PENDING_PICKUP')
+      .where('status', '==', 'PENDING_PICKUP')
       .get();
     
     let expiredCount = 0;
@@ -1177,8 +1254,9 @@ const checkExpiredOrders = async (req, res) => {
       const pickupDeadline = orderData.pickupDeadline?.toDate();
       
       if (pickupDeadline && now > pickupDeadline) {
-        // Mark as expired
+        // Mark as expired (write both fields for compatibility)
         batch.update(orderDoc.ref, {
+          status: 'EXPIRED',
           orderStatus: 'EXPIRED',
           expiredAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
@@ -1187,13 +1265,12 @@ const checkExpiredOrders = async (req, res) => {
         
         // Restore stock
         for (const item of orderData.items || []) {
+          if (!item.handbagId) continue;
           const handbagRef = db.collection('handbags').doc(item.handbagId);
           const handbagDoc = await handbagRef.get();
           
           if (handbagDoc.exists) {
-            const handbagData = handbagDoc.data();
-            const restoredQuantity = (handbagData.quantity || 0) + item.quantity;
-            
+            const restoredQuantity = (handbagDoc.data().quantity || 0) + (item.quantity || 1);
             batch.update(handbagRef, {
               quantity: restoredQuantity,
               updatedAt: FieldValue.serverTimestamp()
@@ -1206,7 +1283,7 @@ const checkExpiredOrders = async (req, res) => {
         batch.set(statusHistoryRef, {
           status: 'EXPIRED',
           timestamp: FieldValue.serverTimestamp(),
-          note: 'Order expired automatically - pickup window closed',
+          note: 'Order expired automatically - pickup window closed. Stock restored.',
           updatedBy: 'system',
           updatedByRole: 'system'
         });
@@ -1334,242 +1411,6 @@ const updateDonationStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error updating donation status',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Get all book donations for admin
-// @route   GET /api/admin/book-donations
-// @access  Private (Admin only)
-const getBookDonations = async (req, res) => {
-  try {
-    // Firebase implementation for book donations - simplified query to avoid composite index issues
-    const donationsSnapshot = await require('../config/firebaseAdmin').firestore
-      .collection('donations')
-      .where('type', '==', 'book')
-      .limit(50)
-      .get();
-    
-    const bookDonations = [];
-    
-    for (const doc of donationsSnapshot.docs) {
-      try {
-        const donationData = doc.data();
-        
-        // Get donor information
-        let donorInfo = { name: 'Anonymous', email: '' };
-        if (donationData.donorId) {
-          try {
-            const userRef = require('../config/firebaseAdmin').firestore
-              .collection('users')
-              .doc(donationData.donorId);
-            const userDoc = await userRef.get();
-            if (userDoc.exists) {
-              const userData = userDoc.data();
-              donorInfo = {
-                name: userData.name || 'Anonymous',
-                email: userData.email || ''
-              };
-            }
-          } catch (userError) {
-            console.warn('Error fetching donor info:', userError);
-          }
-        }
-        
-        // Map the donation data to match frontend expectations
-        const mappedDonation = {
-          _id: doc.id,
-          id: doc.id,
-          title: (donationData.book && donationData.book.title) || 'Untitled',
-          author: (donationData.book && donationData.book.author) || 'Unknown Author',
-          category: (donationData.book && donationData.book.genre) || 'Other',
-          condition: (donationData.book && donationData.book.condition) || 'Good',
-          isbn: (donationData.book && donationData.book.isbn) || '',
-          language: (donationData.book && donationData.book.language) || 'English',
-          publisher: (donationData.book && donationData.book.publisher) || '',
-          quantity: donationData.quantity || 1,
-          image: (donationData.images && donationData.images.length > 0) ? donationData.images[0] : null,
-          status: donationData.donationStatus || 'pending',
-          donor: donorInfo,
-          donorMessage: donationData.donorMessage || '',
-          createdAt: donationData.createdAt && donationData.createdAt.toDate ? donationData.createdAt.toDate() : new Date(),
-          updatedAt: donationData.updatedAt && donationData.updatedAt.toDate ? donationData.updatedAt.toDate() : new Date()
-        };
-        
-        bookDonations.push(mappedDonation);
-      } catch (docError) {
-        console.error('Error processing donation document:', docError);
-        // Continue processing other documents
-      }
-    }
-
-    // Sort client-side to avoid composite index issues
-    bookDonations.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-    res.json({
-      success: true,
-      count: bookDonations.length,
-      total: bookDonations.length,
-      currentPage: 1,
-      totalPages: 1,
-      bookDonations
-    });
-
-  } catch (error) {
-    console.error('Get book donations error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching book donations',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Update book donation status
-// @route   PUT /api/admin/book-donations/:id/status
-// @access  Private (Admin only)
-const updateBookDonationStatus = async (req, res) => {
-  try {
-    const donationId = req.params.id;
-    const { status } = req.body;
-
-    // Validate status
-    const validStatuses = ['Pending', 'Approved', 'Rejected', 'Added to Library'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid status. Valid statuses are: ' + validStatuses.join(', ')
-      });
-    }
-
-    // Get the donation first
-    const donationDoc = await db.collection('donations').doc(donationId).get();
-    
-    if (!donationDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Donation not found'
-      });
-    }
-
-    const donationData = donationDoc.data();
-    
-    // Update the donation status
-    await db.collection('donations').doc(donationId).update({
-      status,
-      updatedAt: FieldValue.serverTimestamp(),
-      lastModifiedBy: req.user.uid
-    });
-
-    // If status is 'Added to Library', also add the book to the books collection
-    if (status === 'Added to Library' && donationData.type === 'book' && donationData.book) {
-      const bookData = {
-        title: donationData.book.title,
-        author: donationData.book.author,
-        genre: donationData.book.genre,
-        isbn: donationData.book.isbn || '',
-        description: donationData.book.description || '',
-        publishedYear: donationData.book.publishedYear || new Date().getFullYear(),
-        language: donationData.book.language || 'English',
-        pages: donationData.book.pages || 0,
-        publisher: donationData.book.publisher || '',
-        availableCopies: 1,
-        totalCopies: 1,
-        imageUrl: donationData.book.imageUrl || '',
-        addedBy: 'donation',
-        donationId: donationId,
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp()
-      };
-
-      await db.collection('books').add(bookData);
-    }
-
-    res.json({
-      success: true,
-      message: `Donation status updated to ${status}`,
-      donation: {
-        id: donationId,
-        status,
-        updatedAt: new Date()
-      }
-    });
-
-  } catch (error) {
-    console.error('Update book donation status error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating book donation status',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Remove book donation from library
-// @route   DELETE /api/admin/book-donations/:id/remove-from-library
-// @access  Private (Admin only)
-const removeBookDonationFromLibrary = async (req, res) => {
-  try {
-    res.status(501).json({
-      success: false,
-      message: 'Remove book donation from library not implemented for Firebase yet'
-    });
-  } catch (error) {
-    console.error('Remove book from library error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error removing book from library',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Delete book donation
-// @route   DELETE /api/admin/book-donations/:id
-// @access  Private (Admin only)
-const deleteBookDonation = async (req, res) => {
-  try {
-    const donationId = req.params.id;
-
-    // Check if donation exists
-    const donationDoc = await db.collection('donations').doc(donationId).get();
-    
-    if (!donationDoc.exists) {
-      return res.status(404).json({
-        success: false,
-        message: 'Donation not found'
-      });
-    }
-
-    const donationData = donationDoc.data();
-    
-    // If the donation was already added to library, we should also remove from books collection
-    if (donationData.status === 'Added to Library') {
-      const booksSnapshot = await db.collection('books')
-        .where('donationId', '==', donationId)
-        .get();
-      
-      const batch = db.batch();
-      booksSnapshot.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-      await batch.commit();
-    }
-
-    // Delete the donation
-    await db.collection('donations').doc(donationId).delete();
-
-    res.json({
-      success: true,
-      message: 'Book donation deleted successfully'
-    });
-
-  } catch (error) {
-    console.error('Delete book donation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting book donation',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -1931,16 +1772,19 @@ const getAllBookRequests = async (req, res) => {
       userId: request.userId,
       bookId: request.bookId,
       userEmail: request.userEmail || request.userData?.email || 'Unknown User',
+      userName: request.userName || request.userData?.name || '',
+      userPhone: request.userPhone || request.userData?.phoneNumber || request.userData?.phone || '',
       createdAt: request.createdAt || new Date().toISOString(),
       updatedAt: request.updatedAt || new Date().toISOString(),
       dueDate: request.dueDate || null,
       pickedUpAt: request.pickedUpAt || null,
       returnedAt: request.returnedAt || null,
-      // Ensure book and user data are included with defaults
       bookData: request.bookData || request.book || { title: 'Unknown Book', author: 'Unknown Author' },
-      userData: request.userData || request.user || { 
-        name: request.userEmail || 'Unknown User', 
-        email: request.userEmail || '' 
+      userData: {
+        ...(request.userData || request.user || {}),
+        name: request.userData?.name || request.userName || request.userEmail || 'Unknown User',
+        email: request.userData?.email || request.userEmail || '',
+        phoneNumber: request.userPhone || request.userData?.phoneNumber || request.userData?.phone || ''
       }
     }));
 
@@ -2008,23 +1852,23 @@ const updateBookRequestStatus = async (req, res) => {
         });
       }
 
-      // Update inventory based on status changes
-      if (status === 'ACCEPTED' && request.status === 'PENDING') {
-        // Decrease inventory when accepting request
-        if ((book.quantity || 0) <= 0) {
-          return res.status(400).json({
-            success: false,
-            message: 'Book is out of stock and cannot be accepted'
-          });
-        }
-        await bookService.updateBookQuantity(request.bookId, (book.quantity - 1));
-        inventoryUpdated = true;
-      } else if (status === 'RETURNED' && request.status === 'PICKED_UP') {
-        // Increase inventory when book is returned
+      // ── Inventory logic ────────────────────────────────────────────────────
+      // Quantity is reduced when user PLACES the request.
+      // So we only need to RESTORE quantity when the book won't be borrowed:
+      //   - REJECTED from PENDING   → user never got it, restore
+      //   - REJECTED from ACCEPTED  → user never got it, restore
+      //   - RETURNED from PICKED_UP → user returned it, restore
+      // No change needed for ACCEPTED or PICKED_UP transitions.
+
+      if (
+        status === 'REJECTED' &&
+        ['PENDING', 'ACCEPTED'].includes(request.status)
+      ) {
+        // Restore stock — book won't be borrowed
         await bookService.updateBookQuantity(request.bookId, (book.quantity + 1));
         inventoryUpdated = true;
-      } else if (status === 'REJECTED' && request.status === 'ACCEPTED') {
-        // Restore inventory if rejecting an accepted request
+      } else if (status === 'RETURNED' && request.status === 'PICKED_UP') {
+        // Book returned — restore stock
         await bookService.updateBookQuantity(request.bookId, (book.quantity + 1));
         inventoryUpdated = true;
       }
@@ -2080,11 +1924,11 @@ const updateBookRequestStatus = async (req, res) => {
 // Helper function for book request status messages
 const getBookRequestStatusMessage = (status) => {
   const messages = {
-    'PENDING': 'Book request is pending admin review.',
-    'ACCEPTED': 'Book request accepted! Please call the NGO to schedule pickup: +91-9324335478',
-    'REJECTED': 'Book request has been rejected.',
+    'PENDING':   'Book request is pending admin review.',
+    'ACCEPTED':  'Book request accepted! Coordinate with the NGO to schedule pickup.',
+    'REJECTED':  'Book request has been rejected.',
     'PICKED_UP': 'Book has been picked up. Please return within 30 days.',
-    'RETURNED': 'Book has been returned successfully. Thank you!'
+    'RETURNED':  'Book has been returned successfully. Thank you!'
   };
   return messages[status] || 'Status updated successfully.';
 };
@@ -2095,10 +1939,8 @@ module.exports = {
   getBookById,
   updateBook,
   deleteBook,
-  getBookBorrowHistory,
   addBook,
-  getBookByISBN,
-  addBookStock,
+    addBookStock,
   getAllHandbags,
   getHandbagById,
   updateHandbag,
@@ -2112,10 +1954,6 @@ module.exports = {
   checkExpiredOrders,
   getAllDonations,
   updateDonationStatus,
-  getBookDonations,
-  updateBookDonationStatus,
-  removeBookDonationFromLibrary,
-  deleteBookDonation,
   getAllBookRequests,
   updateBookRequestStatus,
   getRecentActivities,

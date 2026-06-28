@@ -1,6 +1,7 @@
 const { firestore, admin } = require('../config/firebaseAdmin');
 const db = firestore;
 const { v4: uuidv4 } = require('uuid');
+const { getUserDocument } = require('../services/userService');
 
 const donationController = {
   // Create new donation
@@ -75,15 +76,20 @@ const donationController = {
       
       console.log('=== END IMAGE PROCESSING DEBUG ===');
 
+      // Fetch user's phone number from Firestore profile
+      const userDoc = await getUserDocument(req.user.uid);
+      const userPhone = userDoc?.phoneNumber || userDoc?.phone || '';
+
       // Create donation document
       const donationData = {
-        donorId: req.user.uid,
-        donorName: req.user.displayName || req.user.email,
-        donorEmail: req.user.email,
+        donorId:      req.user.uid,
+        donorName:    userDoc?.name || req.user.displayName || req.user.email,
+        donorEmail:   req.user.email,
+        donorPhone:   userPhone,
         itemType,
         items,
         donorMessage: donorMessage || '',
-        status: 'pending', // pending, approved, rejected, received
+        status: 'pending',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       };

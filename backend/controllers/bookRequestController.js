@@ -4,7 +4,8 @@ const {
   getBookRequestById,
   updateBookRequestStatus
 } = require('../services/bookRequestService');
-const { getBookById } = require('../services/bookService');
+const { getBookById, updateBookQuantity } = require('../services/bookService');
+const { getUserDocument } = require('../services/userService');
 
 // @desc    Create a new book request
 // @route   POST /api/book-requests
@@ -37,7 +38,7 @@ const createBookRequestController = async (req, res) => {
       });
     }
 
-    // Check if user already has a pending or accepted request for this book
+    // Check if user already has a pending/active request for this book
     const existingRequests = await getBookRequests({
       userId: req.user.uid,
       bookId: bookId,
@@ -51,24 +52,33 @@ const createBookRequestController = async (req, res) => {
       });
     }
 
+    // ── Reduce inventory immediately when request is placed ──────────────────
+    await updateBookQuantity(bookId, book.quantity - 1);
+
+    // Fetch user's phone number from Firestore profile
+    const userDoc = await getUserDocument(req.user.uid);
+    const userPhone = userDoc?.phoneNumber || userDoc?.phone || '';
+
     // Create book request
     const requestData = {
-      userId: req.user.uid,
-      bookId: bookId,
-      message: message || '',
-      userEmail: req.user.email,
-      status: 'PENDING'
+      userId:      req.user.uid,
+      bookId,
+      message:     message || '',
+      userEmail:   req.user.email,
+      userName:    req.user.displayName || userDoc?.name || '',
+      userPhone,
+      status:      'PENDING'
     };
 
     const request = await createBookRequest(requestData);
 
     res.status(201).json({
       success: true,
-      message: 'Book request submitted successfully! Check your MyShelf for updates.',
+      message: 'Book request submitted! Check your MyShelf for updates.',
       request: {
-        id: request.id,
-        bookId: request.bookId,
-        status: request.status,
+        id:        request.id,
+        bookId:    request.bookId,
+        status:    request.status,
         createdAt: request.createdAt
       }
     });
@@ -177,7 +187,7 @@ const cancelBookRequest = async (req, res) => {
     }
 
     // Check if request can be cancelled
-    if (!['PENDING', 'APPROVED'].includes(request.status)) {
+    if (!['PENDING', 'ACCEPTED'].includes(request.status)) {
       return res.status(400).json({
         success: false,
         message: 'Request cannot be cancelled in current status'

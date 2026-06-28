@@ -272,7 +272,7 @@ const AdminHandbags = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-500">In Stock</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {handbags.filter(h => h.stock > 0).length}
+                  {handbags.filter(h => (h.quantity || 0) > 0).length}
                 </p>
               </div>
             </div>
@@ -284,23 +284,23 @@ const AdminHandbags = () => {
                 <FaChartLine className="text-yellow-600 text-xl" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">Total Sales</p>
+                <p className="text-sm font-medium text-gray-500">Handbags Sold</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {handbags.reduce((sum, h) => sum + (h.totalSales || 0), 0)}
+                  {handbags.reduce((sum, h) => sum + (parseInt(h.totalSold, 10) || 0), 0)}
                 </p>
               </div>
             </div>
           </div>
-          
+
           <div className="bg-white rounded-lg shadow-sm p-6">
             <div className="flex items-center">
-              <div className="p-3 bg-purple-100 rounded-full">
-                <FaDollarSign className="text-purple-600 text-xl" />
+              <div className="p-3 bg-green-100 rounded-full">
+                <FaDollarSign className="text-green-600 text-xl" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">Total Value</p>
+                <p className="text-sm font-medium text-gray-500">Revenue Generated</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {formatPrice(handbags.reduce((sum, h) => sum + (h.price * h.stock), 0))}
+                  {formatPrice(handbags.reduce((sum, h) => sum + (parseInt(h.totalRevenue, 10) || 0), 0))}
                 </p>
               </div>
             </div>
@@ -452,7 +452,7 @@ const AdminHandbags = () => {
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                         {handbag.category}
                       </span>
-                      <span>Sales: {handbag.totalSales || 0}</span>
+                      <span>Sales: {parseInt(handbag.totalSold, 10) || 0}</span>
                     </div>
                     
                       <p className="text-sm text-gray-600 line-clamp-2">

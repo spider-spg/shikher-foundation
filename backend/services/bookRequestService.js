@@ -85,7 +85,8 @@ const getBookRequests = async (filters = {}) => {
           requestData.userData = {
             id: userSnap.id,
             name: userData.name || userData.displayName || userData.email,
-            email: userData.email
+            email: userData.email,
+            phoneNumber: userData.phoneNumber || userData.phone || ''
           };
           // Keep backward compatibility
           requestData.user = requestData.userData;
@@ -163,7 +164,8 @@ const getBookRequestById = async (requestId) => {
         requestData.user = {
           id: userSnap.id,
           name: userData.name || userData.displayName || userData.email,
-          email: userData.email
+          email: userData.email,
+          phoneNumber: userData.phoneNumber || userData.phone || ''
         };
       }
     }

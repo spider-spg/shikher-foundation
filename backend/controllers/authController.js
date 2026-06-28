@@ -8,11 +8,37 @@ const {
   addToCart,
   removeFromCart,
   clearCart,
-  getUserBorrowedBooks,
   setUserRole
 } = require('../services/userService');
 const validator = require('validator');
 const { firestore } = require('../config/firebaseAdmin');
+
+// ─── Verify a password against Firebase Auth (Admin SDK can't check passwords) ─
+// Uses the Firebase Auth REST API's signInWithPassword endpoint.
+const verifyPasswordWithFirebase = async (email, password) => {
+  const apiKey = process.env.FIREBASE_WEB_API_KEY || process.env.REACT_APP_FIREBASE_API_KEY;
+
+  if (!apiKey) {
+    console.warn('FIREBASE_WEB_API_KEY not set - cannot verify password via Firebase Auth');
+    return false;
+  }
+
+  try {
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, returnSecureToken: false })
+      }
+    );
+
+    return response.ok; // true if credentials are valid
+  } catch (error) {
+    console.error('Firebase password verification error:', error);
+    return false;
+  }
+};
 
 // @desc    Register user
 // @route   POST /api/auth/signup
@@ -21,13 +47,20 @@ const signup = async (req, res) => {
   let firebaseUser = null;
   
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, phoneNumber } = req.body;
 
     // Validation
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
         message: 'Please fill in all the required fields to create your account'
+      });
+    }
+
+    if (!phoneNumber || !/^[6-9]\d{9}$/.test(phoneNumber.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid 10-digit Indian mobile number'
       });
     }
 
@@ -87,6 +120,7 @@ const signup = async (req, res) => {
     const userDoc = await createUserDocument(firebaseUser.uid, {
       name: name.trim(),
       email: email.toLowerCase(),
+      phoneNumber: phoneNumber.trim(),
       role: 'customer'
     });
     console.log('User document created successfully:', userDoc.id);
@@ -180,14 +214,24 @@ const login = async (req, res) => {
     console.log('Login attempt:', { 
       email, 
       providedEmail: email.toLowerCase(),
-      envAdminEmail: process.env.ADMIN_EMAIL,
-      envAdminPassword: process.env.ADMIN_PASSWORD ? '[SET]' : '[NOT SET]',
-      emailMatch: email.toLowerCase() === process.env.ADMIN_EMAIL,
-      passwordMatch: password === process.env.ADMIN_PASSWORD
+      envAdminEmail: process.env.ADMIN_EMAIL
     });
 
-    // Check for hardcoded admin credentials
-    if (email.toLowerCase() === process.env.ADMIN_EMAIL && password === process.env.ADMIN_PASSWORD) {
+    // Check if this email is the admin account
+    if (email.toLowerCase() === process.env.ADMIN_EMAIL) {
+      // BUSINESS RULE: Accept either the original hardcoded env password
+      // OR a password the admin has changed via their Profile page
+      // (which updates Firebase Auth directly).
+      const matchesEnvPassword = process.env.ADMIN_PASSWORD && password === process.env.ADMIN_PASSWORD;
+      const matchesFirebasePassword = await verifyPasswordWithFirebase(email.toLowerCase(), password);
+
+      if (!matchesEnvPassword && !matchesFirebasePassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid email or password. Please check your credentials and try again'
+        });
+      }
+
       // Check if admin user exists in Firebase Auth
       let adminUser;
       try {
@@ -266,9 +310,8 @@ const getMe = async (req, res) => {
       });
     }
 
-    // Get user cart and borrowed books
+    // Get user cart
     const cart = await getUserCart(req.user.uid);
-    const borrowedBooks = await getUserBorrowedBooks(req.user.uid);
 
     res.json({
       success: true,
@@ -276,12 +319,10 @@ const getMe = async (req, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
-        phone: user.phone,
+        phone: user.phoneNumber || user.phone || '',
         role: user.role,
         cart: cart,
-        borrowedBooks: borrowedBooks,
         cartItemCount: cart.reduce((total, item) => total + (item.quantity || 0), 0),
-        activeBorrowedBooksCount: borrowedBooks.length,
         createdAt: user.createdAt,
         isActive: user.isActive
       }
@@ -302,8 +343,10 @@ const getMe = async (req, res) => {
 // @access  Private
 const updateProfile = async (req, res) => {
   try {
-    const { name, phone } = req.body;
+    const { name, email, phone, phoneNumber } = req.body;
+    const incomingPhone = phoneNumber !== undefined ? phoneNumber : phone;
 
+    // ── Validate name ────────────────────────────────────────────────────────
     if (!name || name.trim().length < 2) {
       return res.status(400).json({
         success: false,
@@ -311,37 +354,82 @@ const updateProfile = async (req, res) => {
       });
     }
 
-    const updateData = {
-      name: name.trim()
-    };
-
-    if (phone !== undefined) {
-      updateData.phone = phone.trim();
+    // ── Validate email if provided ───────────────────────────────────────────
+    if (email && !validator.isEmail(email.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address'
+      });
     }
 
-    // Update user document in Firestore
-    const updatedUser = await updateUserDocument(req.user.uid, updateData);
+    // ── Validate phone if provided ───────────────────────────────────────────
+    if (incomingPhone !== undefined) {
+      const trimmedPhone = incomingPhone.trim();
+      if (trimmedPhone && !/^[6-9]\d{9}$/.test(trimmedPhone)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide a valid 10-digit Indian mobile number'
+        });
+      }
+    }
 
-    // Update display name in Firebase Auth
-    await auth.updateUser(req.user.uid, {
-      displayName: name.trim()
-    });
+    // ── Build Firestore update object ────────────────────────────────────────
+    const updateData = { name: name.trim() };
+    if (email) updateData.email = email.trim().toLowerCase();
+    if (incomingPhone !== undefined) updateData.phoneNumber = incomingPhone.trim();
+
+    // ── Check if new email is already taken ──────────────────────────────────
+    if (email && email.trim().toLowerCase() !== req.user.email?.toLowerCase()) {
+      const existing = await findUserByEmail(email.trim().toLowerCase());
+      if (existing && existing.id !== req.user.uid) {
+        return res.status(400).json({
+          success: false,
+          message: 'This email address is already associated with another account'
+        });
+      }
+    }
+
+    // ── Update Firebase Auth (name + email) ──────────────────────────────────
+    const authUpdate = { displayName: name.trim() };
+    if (email && email.trim().toLowerCase() !== req.user.email?.toLowerCase()) {
+      authUpdate.email = email.trim().toLowerCase();
+    }
+    await auth.updateUser(req.user.uid, authUpdate);
+
+    // ── Update Firestore document ────────────────────────────────────────────
+    const updatedUser = await updateUserDocument(req.user.uid, updateData);
 
     res.json({
       success: true,
       message: 'Profile updated successfully',
       user: {
-        id: updatedUser.id,
-        name: updatedUser.name,
-        email: updatedUser.email,
-        phone: updatedUser.phone,
-        role: updatedUser.role,
-        createdAt: updatedUser.createdAt
+        id:          updatedUser.id,
+        name:        updatedUser.name,
+        email:       updatedUser.email,
+        phone:       updatedUser.phoneNumber || updatedUser.phone || '',
+        phoneNumber: updatedUser.phoneNumber || updatedUser.phone || '',
+        role:        updatedUser.role,
+        createdAt:   updatedUser.createdAt
       }
     });
 
   } catch (error) {
     console.error('Update profile error:', error);
+
+    // Firebase-specific email errors
+    if (error.code === 'auth/email-already-exists') {
+      return res.status(400).json({
+        success: false,
+        message: 'This email address is already in use by another account'
+      });
+    }
+    if (error.code === 'auth/invalid-email') {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address'
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Error updating profile',

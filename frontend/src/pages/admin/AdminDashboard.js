@@ -1,350 +1,302 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  FaUsers, 
-  FaBook, 
-  FaHandPaper, 
-  FaShoppingCart,
-  FaDonate,
-  FaCalendarAlt,
-  FaArrowUp,
-  FaArrowDown,
-  FaEye,
-  FaPlus,
-  FaChartLine,
-  FaChartBar,
-  FaClock,
-  FaHeart
+import {
+  FaUsers, FaBook, FaHandPaper, FaShoppingCart,
+  FaHeart, FaPlus, FaEye, FaSpinner,
+  FaTshirt, FaGamepad, FaPen, FaGift, FaRupeeSign,
+  FaExclamationTriangle
 } from 'react-icons/fa';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'react-hot-toast';
-import LoadingSpinner from '../../components/LoadingSpinner';
 import api from '../../utils/api';
 
+// ── Single coloured stat box ───────────────────────────────────────────────────
+const StatBox = ({ label, value, bg, text }) => (
+  <div className={`${bg} rounded-lg p-4 text-center`}>
+    <p className={`text-2xl font-bold ${text}`}>{value ?? 0}</p>
+    <p className="text-xs text-gray-600 mt-1">{label}</p>
+  </div>
+);
+
+// ── Sub-section header inside a card ──────────────────────────────────────────
+const SubHeader = ({ label }) => (
+  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mt-5 mb-3 border-t border-gray-100 pt-4">
+    {label}
+  </p>
+);
+
 const AdminDashboard = () => {
-  const [stats, setStats] = useState({
-    users: { total: 0, change: 0 },
-    books: { total: 0, borrowed: 0, available: 0 },
-    handbags: { total: 0, sold: 0, inStock: 0 },
-    orders: { total: 0, pending: 0, completed: 0 },
-    bookDonations: { total: 0, approved: 0, pending: 0 }
-  });
-  
-  const [recentActivities, setRecentActivities] = useState([]);
-  const [topBooks, setTopBooks] = useState([]);
-  const [topHandbags, setTopHandbags] = useState([]);
-  const [loading, setLoading] = useState(true);
-  
-  const { isAdmin, user } = useAuth();
+  const [stats, setStats]         = useState(null);
+  const [loading, setLoading]     = useState(true);
+  const { user } = useAuth();
 
   useEffect(() => {
-    if (user?.role === 'admin') {
-      fetchDashboardData();
-    }
-  }, [user?.role]); // Use user.role instead of isAdmin() function
+    if (user?.role === 'admin') fetchDashboardData();
+  }, [user?.role]);
 
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      
-      // Fetch all dashboard data in parallel with proper error handling
-      const [
-        dashboardResponse,
-        activitiesResponse,
-        topBooksResponse,
-        topHandbagsResponse
-      ] = await Promise.allSettled([
-        api.get('/admin/dashboard'),
-        api.get('/admin/recent-activities'),
-        api.get('/admin/top-books'),
-        api.get('/admin/top-handbags')
-      ]);
-
-      // Handle dashboard response
-      if (dashboardResponse.status === 'fulfilled') {
-        setStats(dashboardResponse.value.data.dashboard || stats);
-      } else {
-        console.warn('Dashboard data fetch failed:', dashboardResponse.reason);
-        // Keep default stats
-      }
-
-      // Handle activities response
-      if (activitiesResponse.status === 'fulfilled') {
-        setRecentActivities(activitiesResponse.value.data.activities || []);
-      } else {
-        console.warn('Activities data fetch failed:', activitiesResponse.reason);
-        setRecentActivities([]);
-      }
-
-      // Handle top books response
-      if (topBooksResponse.status === 'fulfilled') {
-        setTopBooks(topBooksResponse.value.data.books || []);
-      } else {
-        console.warn('Top books data fetch failed:', topBooksResponse.reason);
-        setTopBooks([]);
-      }
-
-      // Handle top handbags response
-      if (topHandbagsResponse.status === 'fulfilled') {
-        setTopHandbags(topHandbagsResponse.value.data.handbags || []);
-      } else {
-        console.warn('Top handbags data fetch failed:', topHandbagsResponse.reason);
-        setTopHandbags([]);
-      }
-      
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
-      toast.error('Some dashboard data could not be loaded');
+      const res = await api.get('/admin/dashboard');
+      setStats(res.data.dashboard || null);
+    } catch {
+      toast.error('Could not load dashboard data');
     } finally {
       setLoading(false);
     }
   };
 
-  // BUSINESS RULE: NO money/currency formatting - removed formatPrice function
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+  const fmt = (v) =>
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(v || 0);
+
+  const donationIcon = (type) => {
+    const map = { books: <FaBook />, clothes: <FaTshirt />, toys: <FaGamepad />, stationary: <FaPen /> };
+    return map[type] || <FaGift />;
   };
 
-  const StatCard = ({ title, value, subtitle, icon: Icon, change, color, link }) => (
-    <div className="bg-white rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow">
-      <div className="flex items-center justify-between">
-        <div className="flex-1">
-          <p className="text-sm font-medium text-gray-500 mb-1">{title}</p>
-          <p className="text-2xl font-bold text-gray-900 mb-1">{value}</p>
-          {subtitle && (
-            <p className="text-sm text-gray-600">{subtitle}</p>
-          )}
-          {change !== undefined && (
-            <div className={`flex items-center mt-2 text-sm ${
-              change >= 0 ? 'text-green-600' : 'text-red-600'
-            }`}>
-              {change >= 0 ? <FaArrowUp className="mr-1" /> : <FaArrowDown className="mr-1" />}
-              <span>{Math.abs(change)}% from last month</span>
-            </div>
-          )}
-        </div>
-        <div className={`p-3 rounded-full ${color}`}>
-          <Icon className="text-xl text-white" />
-        </div>
+  if (loading) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="text-center">
+        <FaSpinner className="animate-spin text-4xl text-primary-600 mx-auto mb-4" />
+        <p className="text-gray-600">Loading dashboard...</p>
       </div>
-      {link && (
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <Link
-            to={link}
-            className="text-sm text-primary-600 hover:text-primary-700 font-medium inline-flex items-center"
-          >
-            <span>View Details</span>
-            <FaEye className="ml-1" />
-          </Link>
-        </div>
-      )}
     </div>
   );
 
-  if (loading) {
-    return <LoadingSpinner />;
-  }
+  if (!stats) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <p className="text-gray-600 mr-4">Failed to load.</p>
+      <button onClick={fetchDashboardData} className="btn-primary">Retry</button>
+    </div>
+  );
+
+  const cancelledOrders = Math.max(0,
+    (stats.orders?.total ?? 0) - (stats.orders?.pending ?? 0) - (stats.orders?.delivered ?? 0)
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>
-          <p className="text-gray-600">Overview of your Shikher Foundation performance and activities</p>
-        </div>
+    <div className="min-h-screen bg-gray-100 py-8">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <Link to="/admin/books/add" className="btn-primary text-center inline-flex items-center justify-center space-x-2">
-            <FaPlus />
-            <span>Add Book</span>
-          </Link>
-          <Link to="/admin/handbags/add" className="btn-outline text-center inline-flex items-center justify-center space-x-2">
-            <FaPlus />
-            <span>Add Handbag</span>
-          </Link>
-          <Link to="/admin/orders" className="btn-outline text-center inline-flex items-center justify-center space-x-2">
-            <FaShoppingCart />
-            <span>Manage Orders</span>
-          </Link>
-          <Link to="/admin/book-requests" className="btn-outline text-center inline-flex items-center justify-center space-x-2">
-            <FaBook />
-            <span>Book Requests</span>
-          </Link>
-          <Link to="/admin/donations" className="btn-outline text-center inline-flex items-center justify-center space-x-2">
-            <FaHeart />
-            <span>Manage Donations</span>
-          </Link>
-        </div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-          <StatCard
-            title="Total Users"
-            value={stats.users.total}
-            subtitle="Registered users"
-            icon={FaUsers}
-            change={stats.users.change}
-            color="bg-blue-500"
-          />
-          
-          <StatCard
-            title="Books"
-            value={stats.books.total}
-            subtitle={`${stats.books.borrowed} borrowed, ${stats.books.available} available`}
-            icon={FaBook}
-            color="bg-green-500"
-          />
-          
-          <StatCard
-            title="Handbags"
-            value={stats.handbags.total}
-            subtitle={`${stats.handbags.sold} sold, ${stats.handbags.available} in stock`}
-            icon={FaHandPaper}
-            color="bg-purple-500"
-          />
-          
-          
-        </div>
-
-        {/* Secondary Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white rounded-lg shadow-sm p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Orders Status</h3>
-              <FaShoppingCart className="text-gray-400" />
-            </div>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">Pending</span>
-                <span className="text-sm font-semibold text-yellow-600">{stats.orders.pending}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">Completed</span>
-                <span className="text-sm font-semibold text-green-600">{stats.orders.delivered}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">Total</span>
-                <span className="text-sm font-semibold text-gray-900">{stats.orders.total}</span>
-              </div>
-            </div>
+        {/* ── Header ── */}
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
+            <p className="text-gray-500 text-sm">Shikher Foundation overview</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={fetchDashboardData} className="btn-outline flex items-center gap-2 text-sm">
+              <FaSpinner /> Refresh
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-          {/* Top Books */}
-          <div className="bg-white rounded-lg shadow-sm">
-            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-lg font-semibold text-gray-900">Most Borrowed Books</h3>
-              <Link to="/admin/books" className="text-sm text-primary-600 hover:text-primary-700">
-                View All
+        {/* ── Quick Actions ── */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+          {[
+            { to: '/admin/books/add',     icon: FaPlus,         label: 'Add Book',      style: 'btn-primary' },
+            { to: '/admin/handbags/add',  icon: FaPlus,         label: 'Add Handbag',   style: 'btn-outline' },
+            { to: '/admin/orders',        icon: FaShoppingCart, label: 'Orders',        style: 'btn-outline' },
+            { to: '/admin/book-requests', icon: FaBook,         label: 'Book Requests', style: 'btn-outline' },
+            { to: '/admin/donations',     icon: FaHeart,        label: 'Donations',     style: 'btn-outline' },
+          ].map(({ to, icon: Icon, label, style }) => (
+            <Link key={to} to={to} className={`${style} text-center inline-flex items-center justify-center gap-2 text-sm`}>
+              <Icon /> {label}
+            </Link>
+          ))}
+        </div>
+
+        {/* ── Users ── */}
+        <div className="bg-white rounded-xl shadow-sm p-5 mb-5 flex items-center gap-4">
+          <div className="p-3 bg-blue-200 rounded-full">
+            <FaUsers className="text-xl text-blue-700" />
+          </div>
+          <div>
+            <p className="text-3xl font-bold text-gray-900">{stats.users?.total ?? 0}</p>
+            <p className="text-sm text-gray-500">Registered Users</p>
+          </div>
+        </div>
+
+        {/* ── Books + Book Requests (merged) ── */}
+        <div className="bg-white rounded-xl shadow-sm p-6 mb-5">
+          {/* header */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-green-200 rounded-full"><FaBook className="text-green-700" /></div>
+              <h3 className="font-semibold text-gray-900">Books & Borrow Requests</h3>
+            </div>
+            <div className="flex gap-3">
+              <Link to="/admin/books" className="text-xs text-primary-600 hover:underline flex items-center gap-1">
+                <FaEye className="text-xs" /> View Books
+              </Link>
+              <Link to="/admin/book-requests" className="text-xs text-primary-600 hover:underline flex items-center gap-1">
+                <FaEye className="text-xs" /> View Requests
               </Link>
             </div>
-            <div className="p-6">
-              {topBooks.length === 0 ? (
-                <p className="text-gray-500 text-center py-4">No data available</p>
-              ) : (
-                <div className="space-y-4">
-                  {topBooks.map((book, index) => (
-                    <div key={book.id || book._id || `book-${index}`} className="flex items-center space-x-4">
-                      <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                        <span className="text-sm font-semibold text-blue-600">#{index + 1}</span>
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-gray-900">{book.title}</h4>
-                        <p className="text-sm text-gray-600">by {book.author}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-gray-900">{book.borrowCount} borrows</p>
-                        <p className="text-xs text-gray-500">{book.category}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
 
-          {/* Top Handbags */}
-          <div className="bg-white rounded-lg shadow-sm">
-            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-lg font-semibold text-gray-900">Best Selling Handbags</h3>
-              <Link to="/admin/handbags" className="text-sm text-primary-600 hover:text-primary-700">
-                View All
-              </Link>
-            </div>
-            <div className="p-6">
-              {topHandbags.length === 0 ? (
-                <p className="text-gray-500 text-center py-4">No data available</p>
-              ) : (
-                <div className="space-y-4">
-                  {topHandbags.map((handbag, index) => (
-                    <div key={handbag.id || handbag._id || `handbag-${index}`} className="flex items-center space-x-4">
-                      <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
-                        <span className="text-sm font-semibold text-purple-600">#{index + 1}</span>
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-gray-900">{handbag.name || handbag.title || handbag.handbagName || 'Unknown Handbag'}</h4>
-                        <p className="text-sm text-gray-600">{handbag.category || 'Uncategorized'} • {handbag.color || 'No color specified'}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-gray-900">{handbag.salesCount} sold</p>
-                        <p className="text-xs text-gray-500">Stock: {handbag.quantity || 0}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+          {/* Book inventory boxes */}
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Library Inventory</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <StatBox label="Total Titles"       value={stats.books?.total}     bg="bg-gray-200"   text="text-gray-900" />
+            <StatBox label="Available Copies"   value={stats.books?.available} bg="bg-green-200"  text="text-green-800" />
+            <StatBox label="Currently Borrowed" value={stats.books?.borrowed}  bg="bg-yellow-200" text="text-yellow-800" />
+          </div>
+
+          {/* Borrow request boxes */}
+          <SubHeader label="Borrow Requests" />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <StatBox label="Total"           value={stats.bookRequests?.total}          bg="bg-gray-200"   text="text-gray-900" />
+            <StatBox label="Pending"         value={stats.bookRequests?.pending}         bg="bg-yellow-200" text="text-yellow-800" />
+            <StatBox label="Awaiting Pickup" value={stats.bookRequests?.awaitingPickup} bg="bg-orange-200" text="text-orange-800" />
+            <StatBox label="Active Borrows"  value={stats.bookRequests?.active}          bg="bg-green-200"  text="text-green-800" />
+            <StatBox label="Overdue"         value={stats.bookRequests?.overdue}         bg="bg-red-200"    text="text-red-800" />
           </div>
         </div>
 
-        {/* Recent Activities */}
-        <div className="bg-white rounded-lg shadow-sm">
-          <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-            <h3 className="text-lg font-semibold text-gray-900">Recent Activities</h3>
-            <FaClock className="text-gray-400" />
+        {/* ── Handbags + Orders (merged) ── */}
+        <div className="bg-white rounded-xl shadow-sm p-6 mb-5">
+          {/* header */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-purple-200 rounded-full"><FaHandPaper className="text-purple-700" /></div>
+              <h3 className="font-semibold text-gray-900">Handbags & Orders</h3>
+            </div>
+            <div className="flex gap-3">
+              <Link to="/admin/handbags" className="text-xs text-primary-600 hover:underline flex items-center gap-1">
+                <FaEye className="text-xs" /> View Handbags
+              </Link>
+              <Link to="/admin/orders" className="text-xs text-primary-600 hover:underline flex items-center gap-1">
+                <FaEye className="text-xs" /> Manage Orders
+              </Link>
+            </div>
           </div>
-          <div className="p-6">
-            {recentActivities.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">No recent activities</p>
-            ) : (
-              <div className="space-y-4">
-                {recentActivities.map((activity, index) => (
-                  <div key={activity.id || activity._id || `activity-${index}-${activity.type}`} className="flex items-start space-x-4 pb-4 border-b border-gray-100 last:border-b-0">
-                    <div className={`p-2 rounded-full ${
-                      activity.type === 'order' ? 'bg-blue-100' :
-                      activity.type === 'book_donation' ? 'bg-green-100' :
-                      activity.type === 'book_borrow' ? 'bg-yellow-100' :
-                      'bg-gray-100'
-                    }`}>
-                      {activity.type === 'order' && <FaShoppingCart className="text-blue-600" />}
-                      {activity.type === 'book_donation' && <FaBook className="text-green-600" />}
-                      {activity.type === 'book_borrow' && <FaBook className="text-yellow-600" />}
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm text-gray-900">{activity.description}</p>
-                      <p className="text-xs text-gray-500 mt-1">{formatDate(activity.createdAt)}</p>
-                    </div>
-                    {activity.quantity && (
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-gray-900">
-                          Qty: {activity.quantity}
-                        </p>
-                      </div>
-                    )}
+
+          {/* Inventory boxes */}
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Inventory</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatBox label="Total Products"      value={stats.handbags?.total}      bg="bg-gray-200"   text="text-gray-900" />
+            <StatBox label="In Stock"            value={stats.handbags?.available}  bg="bg-green-200"  text="text-green-800" />
+            <StatBox label="In Carts (reserved)" value={stats.handbags?.inCarts}    bg="bg-orange-200" text="text-orange-800" />
+            <StatBox label="Out of Stock"        value={stats.handbags?.outOfStock} bg="bg-red-200"    text="text-red-800" />
+          </div>
+
+          {/* Sales boxes */}
+          <SubHeader label="Sales" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <StatBox label="Units Sold (picked up)" value={stats.handbags?.sold} bg="bg-purple-200" text="text-purple-800" />
+            <div className="bg-green-200 rounded-lg p-4 text-center">
+              <p className="text-2xl font-bold text-green-800">{fmt(stats.handbags?.revenue)}</p>
+              <p className="text-xs text-gray-600 mt-1 flex items-center justify-center gap-1">
+                <FaRupeeSign className="text-green-700 text-xs" /> Revenue Generated
+              </p>
+            </div>
+          </div>
+
+          {/* Orders boxes */}
+          <SubHeader label="Orders" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatBox label="Total Orders"        value={stats.orders?.total}     bg="bg-gray-200"   text="text-gray-900" />
+            <StatBox label="Awaiting Pickup"     value={stats.orders?.pending}   bg="bg-orange-200" text="text-orange-800" />
+            <StatBox label="Picked Up"           value={stats.orders?.delivered} bg="bg-green-200"  text="text-green-800" />
+            <StatBox label="Cancelled / Expired" value={cancelledOrders}         bg="bg-red-200"    text="text-red-800" />
+          </div>
+        </div>
+
+        {/* ── Donations ── */}
+        <div className="bg-white rounded-xl shadow-sm p-6 mb-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-pink-200 rounded-full"><FaHeart className="text-pink-600" /></div>
+              <h3 className="font-semibold text-gray-900">Donations</h3>
+            </div>
+            <Link to="/admin/donations" className="text-xs text-primary-600 hover:underline flex items-center gap-1">
+              <FaEye className="text-xs" /> Manage Donations
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            <StatBox label="Total (excl. rejected)" value={stats.donations?.total}    bg="bg-gray-200"   text="text-gray-900" />
+            <StatBox label="Pending Review"         value={stats.donations?.pending}  bg="bg-yellow-200" text="text-yellow-800" />
+            <StatBox label="Approved"               value={stats.donations?.approved} bg="bg-blue-200"   text="text-blue-800" />
+            <StatBox label="Received"               value={stats.donations?.received} bg="bg-green-200"  text="text-green-800" />
+            <StatBox label="Rejected"               value={stats.donations?.rejected} bg="bg-red-200"    text="text-red-800" />
+          </div>
+
+          {/* By Category — accepted in green, rejected in red */}
+          {(stats.donations?.byTypeAccepted || stats.donations?.byTypeRejected) && (
+            <>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">By Category</p>
+
+              {stats.donations?.byTypeAccepted && Object.keys(stats.donations.byTypeAccepted).length > 0 && (
+                <div className="mb-2">
+                  <p className="text-xs text-green-700 font-medium mb-1">✅ Accepted</p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(stats.donations.byTypeAccepted).map(([type, count]) => (
+                      <span key={type} className="inline-flex items-center gap-1.5 bg-green-100 border border-green-300 text-green-800 text-xs px-3 py-2 rounded-lg font-medium">
+                        {donationIcon(type)}
+                        <span className="capitalize">{type}</span>
+                        <span className="font-bold ml-1">{count}</span>
+                      </span>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+
+              {stats.donations?.byTypeRejected && Object.keys(stats.donations.byTypeRejected).length > 0 && (
+                <div>
+                  <p className="text-xs text-red-600 font-medium mb-1">❌ Rejected</p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(stats.donations.byTypeRejected).map(([type, count]) => (
+                      <span key={type} className="inline-flex items-center gap-1.5 bg-red-100 border border-red-300 text-red-800 text-xs px-3 py-2 rounded-lg font-medium">
+                        {donationIcon(type)}
+                        <span className="capitalize">{type}</span>
+                        <span className="font-bold ml-1">{count}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
+
+        {/* ── Stock Alerts ── */}
+        {((stats.alerts?.lowStockBooks?.length > 0) ||
+          (stats.alerts?.outOfStockBooks?.length > 0) ||
+          (stats.alerts?.lowStockHandbags?.length > 0) ||
+          (stats.alerts?.outOfStockHandbags?.length > 0)) && (
+          <div className="bg-white rounded-xl shadow-sm p-6 mb-5">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-200 rounded-full"><FaExclamationTriangle className="text-red-600" /></div>
+              <h3 className="font-semibold text-gray-900">Stock Alerts</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {[
+                { items: stats.alerts?.outOfStockBooks,    label: 'Books — Out of Stock',    color: 'red',    showQty: false },
+                { items: stats.alerts?.lowStockBooks,      label: 'Books — Low Stock',        color: 'yellow', showQty: true },
+                { items: stats.alerts?.outOfStockHandbags, label: 'Handbags — Out of Stock', color: 'red',    showQty: false },
+                { items: stats.alerts?.lowStockHandbags,   label: 'Handbags — Low Stock',    color: 'yellow', showQty: true },
+              ].map(({ items, label, color, showQty }) =>
+                items?.length > 0 ? (
+                  <div key={label}>
+                    <p className={`text-xs font-semibold text-${color}-600 uppercase mb-2`}>{label}</p>
+                    <div className="space-y-1">
+                      {items.map((item, i) => (
+                        <div key={i} className={`text-sm text-gray-700 bg-${color}-50 px-3 py-2 rounded-lg flex justify-between`}>
+                          <span>{item.title}</span>
+                          {showQty && <span className={`font-bold text-${color}-700`}>{item.quantity} left</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null
+              )}
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

@@ -39,50 +39,6 @@ const Home = () => {
     }
   ];
 
-  const stats = [
-    { number: '1,000+', label: 'Books Distributed', icon: FaBook },
-    { number: '500+', label: 'Children Helped', icon: FaUsers },
-    { number: '200+', label: 'Families Supported', icon: FaHeart },
-  ];
-
-  const testimonials = [
-    {
-      name: 'Priya Sharma',
-      role: 'Primary School Teacher',
-      content: 'Shikher Foundation provided books for our entire classroom. My students now have access to quality educational materials that were previously unavailable.',
-      rating: 5
-    },
-    {
-      name: 'Ravi Kumar',
-      role: 'Parent',
-      content: 'The toy donation program brought so much joy to my children. The foundation truly understands what children need.',
-      rating: 5
-    },
-    {
-      name: 'Meera Devi',
-      role: 'Community Member',
-      content: 'Thanks to Shikher Foundation, our community children have access to learning materials and toys. They are changing lives one donation at a time.',
-      rating: 5
-    }
-  ];
-
-  const values = [
-    {
-      icon: FaHeart,
-      title: 'Child-Focused Mission',
-      description: 'Every effort we make is dedicated to improving the lives and education of children in need.'
-    },
-    {
-      icon: FaHandsHelping,
-      title: 'Community Partnership',
-      description: 'We work hand-in-hand with local communities to identify needs and provide meaningful support.'
-    },
-    {
-      icon: FaShieldAlt,
-      title: 'Direct Impact',
-      description: 'From book distribution to toy donations, we ensure every contribution reaches those who need it most.'
-    }
-  ];
 
   return (
     <div className="min-h-screen">
@@ -97,14 +53,20 @@ const Home = () => {
                 <span className="text-green-300"> with our efforts</span>
               </h1>
               <p className="text-xl text-gray-100 leading-relaxed">
-                Supporting communities through book distribution, 
-                toy donations, and essential items for children and families in need.
+                Supporting communities through environmental consciousness, waste reduction, 
+                recycling initiatives, and women empowerment while creating sustainable solutions for a greener world.
               </p>
               <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
                 <Link 
                   to="/handbags" 
                   className="btn-white inline-flex items-center justify-center space-x-2"
                 >
+                </Link>
+                <Link
+                  to="/about"
+                  className="inline-flex items-center justify-center px-6 py-3 border-2 border-white text-white font-semibold rounded-lg hover:bg-white hover:text-green-700 transition-colors duration-200"
+                >
+                  Know More
                 </Link>
               </div>
             </div>
@@ -156,7 +118,7 @@ const Home = () => {
               Our Key Activities
             </h2>
             <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              Shikher Foundation focuses on community welfare through education and essential support services
+              Shikher Foundations focuses on waste management, recycling initiatives, environmental protection and women empowerment
             </p>
           </div>
           
@@ -190,7 +152,7 @@ const Home = () => {
             Join Our Mission Today
           </h2>
           <p className="text-xl text-gray-100 mb-8">
-          Help us continue our work by donating books or essential items for children in need.
+          Help us create a pollution-free India by donating unused items and supporting our recycling initiatives for environmental protection and women empowerment.
           </p>
           <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 justify-center">
             <Link to="/signup" className="btn-white">

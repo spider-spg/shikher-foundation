@@ -39,7 +39,6 @@ const createDonation = async (donationData) => {
         description: donationData.book.description,
         genre: donationData.book.genre || '',
         condition: donationData.book.condition,
-        isbn: donationData.book.isbn || '',
         publicationYear: donationData.book.publicationYear || null,
         language: donationData.book.language || 'English',
         publisher: donationData.book.publisher || ''
@@ -324,66 +323,8 @@ const getDonationStats = async () => {
   }
 };
 
-// Simplified book donation function for direct book donations
-const createBookDonation = async (donationData) => {
-  try {
-    const donationNumber = generateDonationNumber();
-    
-    const donation = {
-      donationNumber,
-      donorId: donationData.donor,
-      type: 'book', // Specify this is a book donation
-      book: {
-        title: donationData.title,
-        author: donationData.author,
-        description: donationData.description,
-        genre: donationData.category || donationData.genre || '',
-        condition: donationData.condition,
-        isbn: donationData.isbn || '',
-        publicationYear: donationData.publishedYear || null,
-        language: donationData.language || 'English',
-        publisher: donationData.publisher || ''
-      },
-      images: donationData.imageData ? [donationData.imageData] : [],
-      quantity: donationData.quantity || 1,
-      donorMessage: donationData.donorMessage || '',
-      donationStatus: donationData.status?.toLowerCase() || 'pending',
-      isUrgent: false, // Book donations are typically not urgent
-      estimatedPickup: null, // Will be set when pickup is arranged
-      actualPickup: null,
-      adminNotes: '',
-      statusHistory: [{
-        status: donationData.status?.toLowerCase() || 'pending',
-        updatedAt: new Date(),
-        updatedBy: 'system',
-        note: 'Book donation submitted'
-      }],
-      processedIntoBook: false,
-      processedBookId: null,
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-
-    const docRef = await donationsRef.add(donation);
-    
-    return {
-      id: docRef.id,
-      title: donation.book.title,
-      author: donation.book.author,
-      status: donation.donationStatus,
-      createdAt: donation.createdAt,
-      ...donation
-    };
-  } catch (error) {
-    console.error('Error creating book donation:', error);
-    throw new Error('Failed to create book donation');
-  }
-};
-
 module.exports = {
   createDonation,
-  createBookDonation,
   getDonations,
   getDonationById,
   updateDonationStatus,

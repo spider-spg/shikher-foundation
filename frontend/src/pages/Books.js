@@ -2,14 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   FaSearch, 
-  FaFilter, 
   FaBook, 
   FaUser, 
-  FaCalendarAlt,
   FaTag,
   FaPlus,
-  FaMinus,
-  FaHeart
+  FaHeart,
+  FaTimes,
+  FaCheckCircle,
+  FaExclamationTriangle,
+  FaClock,
+  FaUndo
 } from 'react-icons/fa';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-hot-toast';
@@ -17,13 +19,14 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import api, { getImageUrl } from '../utils/api';
 
 const Books = () => {
-  const [books, setBooks] = useState([]);
-  const [filteredBooks, setFilteredBooks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [sortBy, setSortBy] = useState('title');
+  const [books, setBooks]                     = useState([]);
+  const [filteredBooks, setFilteredBooks]     = useState([]);
+  const [loading, setLoading]                 = useState(true);
+  const [searchTerm, setSearchTerm]           = useState('');
+  const [sortBy, setSortBy]                   = useState('title');
   const [requestingStates, setRequestingStates] = useState({});
   const [userBookRequests, setUserBookRequests] = useState([]);
+  const [confirmBook, setConfirmBook]         = useState(null); // book to confirm
   
   const { isAuthenticated, user, isAdmin } = useAuth();
   const navigate = useNavigate();
@@ -93,35 +96,42 @@ const Books = () => {
     setFilteredBooks(filtered);
   };
 
-  // BUSINESS RULE: Books are request-based, not direct borrowing
-  const handleRequestBook = async (bookId) => {
+  // ── Step 1: show modal ────────────────────────────────────────────────────
+  const handleRequestBook = (bookId) => {
     if (!isAuthenticated) {
       toast.error('Please login to request books');
       navigate('/login');
       return;
     }
-
     if (isAdmin()) {
       toast.error('Admins cannot request books');
       return;
     }
-
-    // Find the book to request
     const book = books.find(b => b.id === bookId);
     if (!book || !isBookRequestable(book)) {
       toast.error('This book is not available for request');
       return;
     }
+    setConfirmBook(book); // open modal
+  };
 
+  // ── Step 2: user confirmed in modal ──────────────────────────────────────
+  const confirmRequest = async () => {
+    if (!confirmBook) return;
+    const bookId = confirmBook.id;
+    setConfirmBook(null);
     setRequestingStates(prev => ({ ...prev, [bookId]: true }));
 
     try {
-      await api.post('/book-requests', {
-        bookId: bookId
-      });
-      
-      toast.success('Book request submitted successfully! It will appear in your MyShelf once processed.');
-      fetchUserBookRequests(); // Refresh user requests
+      await api.post('/book-requests', { bookId });
+
+      // Optimistically reduce quantity shown
+      setBooks(prev => prev.map(b =>
+        b.id === bookId ? { ...b, quantity: Math.max(0, (b.quantity || 1) - 1) } : b
+      ));
+
+      toast.success('Book requested! Check My Shelf for updates.');
+      fetchUserBookRequests();
     } catch (error) {
       console.error('Error requesting book:', error);
       toast.error(error.response?.data?.message || 'Failed to submit book request');
@@ -163,11 +173,10 @@ const Books = () => {
             {isAuthenticated && !isAdmin() && (
               <div className="mt-4 sm:mt-0">
                 <Link
-                  to="/donate"
-                  className="inline-flex items-center px-6 py-3 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors duration-200"
+                  to="/shelf"
+                  className="btn-outline inline-flex items-center gap-2"
                 >
-                  <FaHeart className="mr-2" />
-                  Donate Books
+                  <FaBook /> My Shelf
                 </Link>
               </div>
             )}
@@ -343,6 +352,85 @@ const Books = () => {
           </div>
         )}
       </div>
+
+      {/* ── Book Request Confirm Modal ─────────────────────────────────────── */}
+      {confirmBook && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-fade-in">
+
+            {/* Header */}
+            <div className="bg-gradient-to-r from-primary-600 to-primary-700 px-6 py-5 flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="bg-white bg-opacity-20 p-2 rounded-full">
+                  <FaBook className="text-white text-xl" />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-lg leading-tight">Confirm Book Request</h3>
+                  <p className="text-primary-100 text-sm">Please read before confirming</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setConfirmBook(null)}
+                className="text-white text-opacity-70 hover:text-opacity-100 hover:bg-white hover:bg-opacity-20 p-1.5 rounded-full transition-all"
+              >
+                <FaTimes />
+              </button>
+            </div>
+
+            {/* Book info */}
+            <div className="px-6 py-4 flex gap-4 border-b border-gray-100">
+              <div className="w-16 h-20 bg-gradient-to-br from-primary-100 to-secondary-100 rounded-lg flex-shrink-0 flex items-center justify-center overflow-hidden">
+                {confirmBook.imageData
+                  ? <img src={confirmBook.imageData} alt={confirmBook.title} className="w-full h-full object-cover" />
+                  : <FaBook className="text-primary-400 text-2xl" />
+                }
+              </div>
+              <div className="min-w-0">
+                <h4 className="font-bold text-gray-900 leading-tight line-clamp-2">{confirmBook.title}</h4>
+                <p className="text-sm text-gray-500 mt-0.5 flex items-center gap-1">
+                  <FaUser className="flex-shrink-0" /> {confirmBook.author}
+                </p>
+                {confirmBook.genre && (
+                  <span className="inline-block mt-1 bg-primary-100 text-primary-700 text-xs px-2 py-0.5 rounded-full">
+                    {confirmBook.genre}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Rules */}
+            <div className="px-6 py-4 space-y-3">
+              <p className="text-sm font-semibold text-gray-700 mb-2">By confirming, you agree that:</p>
+              {[
+                { icon: FaClock,             color: 'text-blue-500',   text: 'Admin will review and approve your request' },
+                { icon: FaExclamationTriangle, color: 'text-amber-500', text: 'You must pick up the book within the agreed window' },
+                { icon: FaUndo,              color: 'text-purple-500', text: 'Book must be returned within 30 days of pickup' },
+              ].map(({ icon: Icon, color, text }) => (
+                <div key={text} className="flex items-start gap-3 text-sm text-gray-600">
+                  <Icon className={`${color} flex-shrink-0 mt-0.5`} />
+                  <span>{text}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="px-6 pb-6 flex gap-3">
+              <button
+                onClick={() => setConfirmBook(null)}
+                className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRequest}
+                className="flex-1 px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                <FaBook /> Confirm Request
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

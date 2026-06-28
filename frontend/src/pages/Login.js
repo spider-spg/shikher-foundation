@@ -95,7 +95,7 @@ const Login = () => {
         {/* Header */}
         <div className="text-center">
           <Link to="/" className="text-3xl font-bold text-gradient">
-            Shikher Foundation
+            Shikher Foundations
           </Link>
           <h2 className="mt-6 text-3xl font-extrabold text-gray-900">
             Welcome Back
@@ -163,6 +163,16 @@ const Login = () => {
               </div>
             </div>
 
+
+            {/* Submit Button */}
+            <div className="flex items-center justify-end">
+              <Link
+                to="/forgot-password"
+                className="text-sm font-medium text-primary-600 hover:text-primary-500 transition-colors"
+              >
+                Forgot your password?
+              </Link>
+            </div>
 
             {/* Submit Button */}
             <div>

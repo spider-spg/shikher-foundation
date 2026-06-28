@@ -1,94 +1,43 @@
 import React, { useState, useEffect } from 'react';
+import PhoneLink from '../components/PhoneLink';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { 
-  FaCheckCircle, 
-  FaPhone, 
-  FaMapMarkerAlt, 
+import {
+  FaCheckCircle,
+  FaPhone,
   FaCalendarAlt,
   FaPrint,
-  FaDownload,
-  FaArrowLeft,
-  FaShoppingBag
+  FaShoppingBag,
+  FaMapMarkerAlt
 } from 'react-icons/fa';
 import { useAuth } from '../context/AuthContext';
-import { useCart } from '../context/CartContext';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/LoadingSpinner';
 import api from '../utils/api';
 
+const NGO_PHONE   = '+91-9324335478';
+const NGO_ADDRESS = 'Jhulelal Society, House No. 15, Sector 2B, Airoli, Navi Mumbai – 400708';
+const NGO_MAP     = 'https://maps.app.goo.gl/qkcwEVqw5bcsnN3s7';
+
 const OrderSuccess = () => {
   const [loading, setLoading] = useState(true);
-  const [order, setOrder] = useState(null);
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
-  const { clearCart } = useCart();
+  const [order, setOrder]     = useState(null);
+  const [searchParams]        = useSearchParams();
+  const navigate              = useNavigate();
+  const { isAuthenticated }   = useAuth();
 
   const orderId = searchParams.get('orderId');
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      navigate('/login');
-      return;
-    }
-
-    if (!orderId) {
-      toast.error('Order ID not found');
-      navigate('/');
-      return;
-    }
-
+    if (!isAuthenticated) { navigate('/login'); return; }
+    if (!orderId)         { toast.error('Order ID not found'); navigate('/'); return; }
     fetchOrder();
-  }, [isAuthenticated, orderId, navigate]);
-
-  // Clear cart once when component mounts
-  useEffect(() => {
-    if (orderId) {
-      clearCart();
-    }
-  }, []); // Empty dependency array to run only once
+  }, [isAuthenticated, orderId]);
 
   const fetchOrder = async () => {
     try {
-      // Handle mock orders (for testing without payment)
-      if (orderId.startsWith('ORDER_')) {
-        const mockOrder = {
-          id: orderId,
-          createdAt: new Date().toISOString(),
-          totalAmount: JSON.parse(localStorage.getItem('mockOrderTotal')) || 1000,
-          phoneNumber: localStorage.getItem('mockOrderPhone') || '9999999999',
-          pickupDeadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-          items: JSON.parse(localStorage.getItem('mockOrderItems')) || [
-            {
-              title: 'Sample Handbag',
-              quantity: 1,
-              price: 1000,
-              image: null
-            }
-          ],
-          status: 'CONFIRMED'
-        };
-        
-        // Clear mock data
-        localStorage.removeItem('mockOrderTotal');
-        localStorage.removeItem('mockOrderItems');
-        localStorage.removeItem('mockOrderPhone');
-        
-        setOrder(mockOrder);
-        setLoading(false);
-        return;
-      }
-
       const response = await api.get(`/orders/${orderId}`);
       if (response.data.success) {
-        console.log('Fetched order data:', response.data.order);
-        console.log('CreatedAt type and value:', typeof response.data.order.createdAt, response.data.order.createdAt);
         setOrder(response.data.order);
-        
-        // Update order status to PAID_PENDING_PICKUP
-        await api.put(`/orders/${orderId}/status`, {
-          status: 'PAID_PENDING_PICKUP'
-        });
       } else {
         toast.error('Order not found');
         navigate('/');
@@ -102,294 +51,204 @@ const OrderSuccess = () => {
     }
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   const formatDate = (dateValue) => {
     try {
       let date;
-      if (dateValue?.seconds) {
-        // Firestore timestamp
-        date = new Date(dateValue.seconds * 1000);
-      } else if (dateValue?._seconds) {
-        // Alternative Firestore format
-        date = new Date(dateValue._seconds * 1000);
-      } else {
-        // Regular date string or object
-        date = new Date(dateValue);
-      }
-      
-      if (isNaN(date.getTime())) {
-        console.warn('Invalid date:', dateValue);
-        return new Date().toLocaleDateString('en-IN');
-      }
-      
-      return date.toLocaleDateString('en-IN');
-    } catch (error) {
-      console.error('Date formatting error:', error, dateValue);
-      return new Date().toLocaleDateString('en-IN');
-    }
+      if (dateValue?.seconds)  date = new Date(dateValue.seconds * 1000);
+      else if (dateValue?._seconds) date = new Date(dateValue._seconds * 1000);
+      else date = new Date(dateValue);
+      return isNaN(date.getTime()) ? '—' : date.toLocaleDateString('en-IN');
+    } catch { return '—'; }
   };
 
-  const formatPrice = (price) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR'
-    }).format(price);
-  };
+  const formatPrice = (price) =>
+    new Intl.NumberFormat('en-IN', {
+      style: 'currency', currency: 'INR', minimumFractionDigits: 0
+    }).format(price || 0);
 
-  const getPickupDeadline = () => {
-    try {
-      if (!order?.createdAt) return 'Not available';
-      
-      let orderDate;
-      if (order.createdAt?.seconds) {
-        // Firestore timestamp
-        orderDate = new Date(order.createdAt.seconds * 1000);
-      } else if (order.createdAt?._seconds) {
-        // Alternative Firestore format
-        orderDate = new Date(order.createdAt._seconds * 1000);
-      } else {
-        // Regular date
-        orderDate = new Date(order.createdAt);
-      }
-      
-      if (isNaN(orderDate.getTime())) {
-        console.warn('Invalid order date:', order.createdAt);
-        orderDate = new Date(); // Fallback to current date
-      }
-      
-      const deadline = new Date(orderDate.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
-      return deadline.toLocaleDateString('en-IN', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    } catch (error) {
-      console.error('Pickup deadline calculation error:', error);
-      return 'Please contact NGO';
-    }
-  };
+  if (loading) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <LoadingSpinner />
+    </div>
+  );
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <LoadingSpinner />
+  if (!order) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="text-center">
+        <h2 className="text-2xl font-semibold text-gray-900 mb-4">Order Not Found</h2>
+        <button onClick={() => navigate('/')} className="btn-primary">Go Home</button>
       </div>
-    );
-  }
-
-  if (!order) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold text-gray-900 mb-4">Order Not Found</h2>
-          <button
-            onClick={() => navigate('/')}
-            className="btn-primary"
-          >
-            Go Home
-          </button>
-        </div>
-      </div>
-    );
-  }
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Success Header */}
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+
+        {/* ── Success header ─────────────────────────────────────────────── */}
         <div className="text-center mb-8">
           <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-4">
             <FaCheckCircle className="h-8 w-8 text-green-600" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            Order Confirmed!
-          </h1>
-          <p className="text-lg text-gray-600">
-            Thank you for your purchase. Your order has been confirmed and payment received.
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Order Confirmed!</h1>
+          <p className="text-gray-600">
+            Your order has been placed. Please coordinate with the NGO to schedule your pickup.
           </p>
         </div>
 
-        {/* Order Receipt */}
-        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-          {/* Receipt Header */}
-          <div className="bg-primary-600 text-white p-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <h2 className="text-xl font-semibold mb-2">Purchase Receipt</h2>
-                <p className="text-primary-100">
-                  Order ID: <span className="font-mono font-bold">{order.id}</span>
-                </p>
-                <p className="text-primary-100">
-                  Order Date: {formatDate(order.createdAt)}
-                </p>
-              </div>
-              <button
-                onClick={handlePrint}
-                className="bg-primary-700 hover:bg-primary-800 px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
-              >
-                <FaPrint />
-                <span>Print Receipt</span>
-              </button>
+        {/* ── Receipt card ───────────────────────────────────────────────── */}
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden mb-6">
+
+          {/* Header bar */}
+          <div className="bg-primary-600 text-white p-6 flex justify-between items-start">
+            <div>
+              <h2 className="text-lg font-semibold mb-1">Order Receipt</h2>
+              <p className="text-primary-100 text-sm font-mono">{order.orderNumber || `#${order.id?.slice(-8).toUpperCase()}`}</p>
+              <p className="text-primary-100 text-sm">{formatDate(order.createdAt)}</p>
             </div>
+            <button
+              onClick={() => window.print()}
+              className="bg-primary-700 hover:bg-primary-800 px-4 py-2 rounded-lg flex items-center gap-2 text-sm transition-colors"
+            >
+              <FaPrint /> Print
+            </button>
           </div>
 
-          {/* Important Pickup Instructions */}
-          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-6">
-            <div className="flex items-start">
-              <FaPhone className="text-yellow-400 text-xl mr-3 mt-1" />
+          {/* NGO Pickup instructions */}
+          <div className="bg-amber-50 border-l-4 border-amber-400 p-6">
+            <div className="flex gap-3">
+              <FaPhone className="text-amber-500 text-xl flex-shrink-0 mt-1" />
               <div>
-                <h3 className="text-lg font-semibold text-yellow-800 mb-2">
-                  📞 IMPORTANT: Call Before Visit
+                <h3 className="text-lg font-semibold text-amber-800 mb-1">
+                  📞 Call the NGO to Schedule Pickup
                 </h3>
-                <p className="text-yellow-700 mb-3">
-                  Please CALL the NGO before visiting to collect your order and confirm pickup timing.
+                <p className="text-amber-700 text-sm mb-4">
+                  Your order is reserved. Contact the NGO to arrange a convenient time to visit, pick up your items, and pay the amount.
                 </p>
-                <div className="bg-yellow-100 rounded-lg p-4">
-                  <h4 className="font-semibold text-yellow-800 mb-2">Contact Information:</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <h5 className="font-medium text-yellow-800">Customer Details:</h5>
-                      <p className="text-yellow-700">📞 Phone: {order.phoneNumber || order.shippingAddress?.phone || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <h5 className="font-medium text-yellow-800">NGO Contact & Location:</h5>
-                      <p className="text-yellow-700">📞 Phone: +91-9324335478</p>
-                      <p className="text-yellow-700">🏢 Shikher Foundation Pickup Point*</p>
-                      <p className="text-yellow-700">📍 Jhulelal Society, House no 15</p>
-                      <p className="text-yellow-700">Sector 2B, Airoli, Navi Mumbai 400708</p>
-                      <p className="text-red-700 text-sm font-semibold mt-1">*Call us before you come to pickup!</p>
-                      <a 
-                        href="https://maps.app.goo.gl/qkcwEVqw5bcsnN3s7" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-blue-700 hover:text-blue-600 text-sm underline block mt-1"
-                      >
-                        📍 View Location on Google Maps
-                      </a>
-                    </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="bg-white rounded-lg p-4 border border-amber-200">
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">NGO Contact</p>
+                    <PhoneLink phone={NGO_PHONE} className="font-bold text-gray-900 text-lg" />
+                    <p className="text-sm text-gray-600 mt-1">Shikher Foundations</p>
                   </div>
-                  <div className="mt-4 p-3 bg-red-100 rounded-lg">
-                    <p className="text-red-800 font-semibold">⏰ PICKUP DEADLINE: {getPickupDeadline()}</p>
-                    <p className="text-red-700 text-sm">Orders not collected within 7 days will be processed for refund.</p>
+                  <div className="bg-white rounded-lg p-4 border border-amber-200">
+                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Pickup Address</p>
+                    <p className="text-sm text-gray-700">{NGO_ADDRESS}</p>
+                    <a
+                      href={NGO_MAP}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm mt-2"
+                    >
+                      <FaMapMarkerAlt /> View on Google Maps
+                    </a>
                   </div>
                 </div>
+                {order.phoneNumber && (
+                  <p className="text-sm text-amber-700 mt-3">
+                    📱 We'll contact you on: <PhoneLink phone={order.phoneNumber} showIcon={false} className="font-medium" />
+                  </p>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Pickup Timeline */}
-          <div className="border-b border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-              <FaCalendarAlt className="text-gray-600 mr-2" />
-              Pickup Timeline
+          {/* Timeline */}
+          <div className="p-6 border-b border-gray-100">
+            <h3 className="text-base font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <FaCalendarAlt className="text-gray-500" /> Pickup Steps
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="text-center p-4 bg-green-50 rounded-lg">
-                <div className="text-2xl mb-2">✅</div>
-                <h4 className="font-semibold text-green-800">Payment Confirmed</h4>
-                <p className="text-sm text-green-600">Just completed</p>
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="bg-green-50 rounded-lg p-4">
+                <div className="text-2xl mb-1">✅</div>
+                <p className="font-semibold text-green-800 text-sm">Order Placed</p>
+                <p className="text-green-600 text-xs">Just now</p>
               </div>
-              <div className="text-center p-4 bg-blue-50 rounded-lg">
-                <div className="text-2xl mb-2">📞</div>
-                <h4 className="font-semibold text-blue-800">Call & Arrange</h4>
-                <p className="text-sm text-blue-600">Call NGO to arrange pickup</p>
+              <div className="bg-blue-50 rounded-lg p-4">
+                <div className="text-2xl mb-1">📞</div>
+                <p className="font-semibold text-blue-800 text-sm">Call & Schedule</p>
+                <p className="text-blue-600 text-xs">Contact NGO</p>
               </div>
-              <div className="text-center p-4 bg-yellow-50 rounded-lg">
-                <div className="text-2xl mb-2">📦</div>
-                <h4 className="font-semibold text-yellow-800">Collect Items</h4>
-                <p className="text-sm text-yellow-600">
-                  Deadline: {getPickupDeadline()}
-                </p>
+              <div className="bg-purple-50 rounded-lg p-4">
+                <div className="text-2xl mb-1">🛍️</div>
+                <p className="font-semibold text-purple-800 text-sm">Pick Up & Pay</p>
+                <p className="text-purple-600 text-xs">At the NGO</p>
               </div>
             </div>
           </div>
 
-          {/* Order Items */}
+          {/* Order items */}
           <div className="p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Order Items</h3>
-            <div className="space-y-4">
-              {order.items.map((item, index) => (
-                <div key={index} className="flex items-center space-x-4 p-4 bg-gray-50 rounded-lg">
+            <h3 className="text-base font-semibold text-gray-900 mb-4">Items Ordered</h3>
+            <div className="space-y-3">
+              {(order.items || []).map((item, index) => (
+                <div key={index} className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg">
                   {item.image && (
                     <img
                       src={item.image}
                       alt={item.title}
-                      className="w-16 h-16 object-cover rounded-lg"
+                      className="w-14 h-14 object-cover rounded-lg flex-shrink-0"
                     />
                   )}
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-gray-900">{item.title}</h4>
-                    <p className="text-gray-600">Quantity: {item.quantity}</p>
-                    <p className="text-gray-600">Price: {formatPrice(item.price)} each</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900 truncate">{item.title}</p>
+                    <p className="text-sm text-gray-500">Qty: {item.quantity} × {formatPrice(item.price)}</p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-semibold text-gray-900">
-                      {formatPrice(item.price * item.quantity)}
-                    </p>
-                  </div>
+                  <p className="font-semibold text-gray-900">
+                    {formatPrice((item.price || 0) * (item.quantity || 1))}
+                  </p>
                 </div>
               ))}
             </div>
 
-            <div className="border-t border-gray-200 mt-6 pt-6">
-              <div className="flex justify-between items-center">
-                <span className="text-xl font-semibold text-gray-900">Total Amount</span>
-                <span className="text-2xl font-bold text-primary-600">
-                  {formatPrice(order.totalAmount)}
-                </span>
-              </div>
+            <div className="border-t border-gray-200 mt-4 pt-4 flex justify-between items-center">
+              <span className="text-lg font-semibold text-gray-900">Total to Pay at Pickup</span>
+              <span className="text-2xl font-bold text-primary-600">
+                {formatPrice(order.totalAmount)}
+              </span>
             </div>
           </div>
 
-          {/* Pickup Instructions */}
+          {/* What to bring */}
           <div className="bg-gray-50 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              What to bring for pickup:
-            </h3>
-            <ul className="space-y-2">
-              <li className="flex items-center">
-                <FaCheckCircle className="text-green-600 mr-2" />
-                This receipt (printed or on phone)
+            <h3 className="text-base font-semibold text-gray-900 mb-3">What to bring:</h3>
+            <ul className="space-y-2 text-sm text-gray-700">
+              <li className="flex items-center gap-2">
+                <FaCheckCircle className="text-green-500 flex-shrink-0" />
+                This receipt (printed or screenshot)
               </li>
-              <li className="flex items-center">
-                <FaCheckCircle className="text-green-600 mr-2" />
-                Order ID: <span className="font-mono font-bold ml-1">{order.id}</span>
+              <li className="flex items-center gap-2">
+                <FaCheckCircle className="text-green-500 flex-shrink-0" />
+                Order ID: <span className="font-mono font-bold">{order.orderNumber || `#${order.id?.slice(-8).toUpperCase()}`}</span>
               </li>
-              <li className="flex items-center">
-                <FaCheckCircle className="text-green-600 mr-2" />
+              <li className="flex items-center gap-2">
+                <FaCheckCircle className="text-green-500 flex-shrink-0" />
                 Valid ID for verification
               </li>
+              <li className="flex items-center gap-2">
+                <FaCheckCircle className="text-green-500 flex-shrink-0" />
+                Cash / payment of <strong>{formatPrice(order.totalAmount)}</strong>
+              </li>
             </ul>
-            
-            <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-              <p className="text-sm text-blue-700">
-                💡 <strong>Pro tip:</strong> The admin may send you an OTP for additional verification during pickup.
-              </p>
-            </div>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+        {/* Action buttons */}
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <button
             onClick={() => navigate('/orders')}
-            className="btn-secondary flex items-center justify-center space-x-2"
+            className="btn-secondary flex items-center justify-center gap-2"
           >
-            <FaShoppingBag />
-            <span>View All Orders</span>
+            <FaShoppingBag /> View My Orders
           </button>
           <button
             onClick={() => navigate('/handbags')}
-            className="btn-primary flex items-center justify-center space-x-2"
+            className="btn-primary flex items-center justify-center gap-2"
           >
-            <FaArrowLeft />
-            <span>Continue Shopping</span>
+            Continue Shopping
           </button>
         </div>
+
       </div>
     </div>
   );

@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   FaBook, 
-  FaPlus, 
+  FaPlus,
+  FaClipboardList, 
   FaEdit, 
   FaTrash, 
   FaSearch, 
@@ -81,14 +82,13 @@ const AdminBooks = () => {
     if (searchTerm) {
       filtered = filtered.filter(book =>
         book.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        book.author.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        book.isbn.toLowerCase().includes(searchTerm.toLowerCase())
+        book.author.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
 
     // Filter by category
     if (selectedCategory) {
-      filtered = filtered.filter(book => book.category === selectedCategory);
+      filtered = filtered.filter(book => (book.genre || book.category) === selectedCategory);
     }
 
     // Sort books
@@ -161,13 +161,22 @@ const AdminBooks = () => {
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Manage Books</h1>
             <p className="text-gray-600">Add, edit, and manage your book library</p>
           </div>
-          <Link
-            to="/admin/books/add"
-            className="btn-primary inline-flex items-center space-x-2"
-          >
-            <FaPlus />
-            <span>Add New Book</span>
-          </Link>
+          <div className="flex items-center space-x-3">
+            <Link
+              to="/admin/book-requests"
+              className="btn-outline inline-flex items-center space-x-2"
+            >
+              <FaClipboardList />
+              <span>Manage Requests</span>
+            </Link>
+            <Link
+              to="/admin/books/add"
+              className="btn-primary inline-flex items-center space-x-2"
+            >
+              <FaPlus />
+              <span>Add New Book</span>
+            </Link>
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -192,7 +201,7 @@ const AdminBooks = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-500">Available</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {books.reduce((sum, book) => sum + (book.quantity || 0), 0)}
+                  {books.reduce((sum, book) => sum + (parseInt(book.quantity, 10) || 0), 0)}
                 </p>
               </div>
             </div>
@@ -206,7 +215,7 @@ const AdminBooks = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-500">Borrowed</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {books.reduce((sum, book) => sum + ((book.totalQuantity || 0) - (book.quantity || 0)), 0)}
+                  {books.reduce((sum, book) => sum + Math.max(0, (parseInt(book.totalQuantity, 10) || 0) - (parseInt(book.quantity, 10) || 0)), 0)}
                 </p>
               </div>
             </div>
@@ -220,7 +229,7 @@ const AdminBooks = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-500">Categories</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {new Set(books.map(book => book.category)).size}
+                  {new Set(books.map(book => book.genre || book.category || 'Uncategorized')).size}
                 </p>
               </div>
             </div>
@@ -236,7 +245,7 @@ const AdminBooks = () => {
                 <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search books by title, author, or ISBN..."
+                  placeholder="Search books by title or author..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
@@ -324,9 +333,6 @@ const AdminBooks = () => {
                       Quantity
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Added
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
                     </th>
                   </tr>
@@ -352,8 +358,7 @@ const AdminBooks = () => {
                           <div>
                             <div className="text-sm font-semibold text-gray-900">{book.title || 'N/A'}</div>
                             <div className="text-sm text-gray-500">by {book.author || 'Unknown Author'}</div>
-                            <div className="text-xs text-gray-400">ISBN: {book.isbn || 'N/A'}</div>
-                            <div className="text-xs text-gray-400">Year: {book.publishedYear || 'N/A'}</div>
+                            <div className="text-xs text-gray-400">{book.genre || book.category || 'Uncategorized'}</div>
                           </div>
                         </div>
                       </td>
@@ -366,12 +371,13 @@ const AdminBooks = () => {
                         <div className="text-sm text-gray-900">
                           <div>Total: {Number(book.totalQuantity) || 0}</div>
                           <div className="text-green-600">Available: {Number(book.quantity) || 0}</div>
-                          <div className="text-yellow-600">Borrowed: {Math.max(0, (Number(book.totalQuantity) || 0) - (Number(book.quantity) || 0))}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="text-sm text-gray-500">
-                          {formatDate(book.createdAt)}
+                          {book.pendingApproval > 0 && (
+                            <div className="text-orange-600">Pending Review: {book.pendingApproval}</div>
+                          )}
+                          {book.awaitingPickup > 0 && (
+                            <div className="text-blue-600">Awaiting Pickup: {book.awaitingPickup}</div>
+                          )}
+                          <div className="text-yellow-600">Currently Borrowed: {book.currentlyBorrowed || 0}</div>
                         </div>
                       </td>
                       <td className="px-6 py-4">

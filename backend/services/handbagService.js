@@ -108,6 +108,51 @@ const getHandbags = async (filters = {}) => {
           handbagData.averageRating = 0;
         }
 
+        // ── Calculate totalSold and totalRevenue ─────────────────────────
+        // Source of truth: salesHistory subcollection (written when admin marks PICKED_UP)
+        // Backfill: if salesHistory is empty, count from orders collection
+        // (handles orders that were picked up before salesHistory writing was implemented)
+        try {
+          const salesHistorySnap = await firestore
+            .collection('handbags').doc(doc.id).collection('salesHistory').get();
+
+          let totalSold    = 0;
+          let totalRevenue = 0;
+
+          if (salesHistorySnap.size > 0) {
+            // Use salesHistory as source of truth
+            salesHistorySnap.docs.forEach(saleDoc => {
+              const sale = saleDoc.data();
+              totalSold    += (sale.quantity || 1);
+              totalRevenue += (sale.salePrice || 0) * (sale.quantity || 1);
+            });
+          } else {
+            // Backfill: count from PICKED_UP orders that contain this handbag
+            const ordersSnap = await firestore
+              .collection('orders')
+              .where('status', '==', 'PICKED_UP')
+              .get();
+
+            ordersSnap.docs.forEach(orderDoc => {
+              const order = orderDoc.data();
+              (order.items || []).forEach(item => {
+                if (item.handbagId === doc.id) {
+                  totalSold    += (item.quantity || 1);
+                  totalRevenue += (item.price || 0) * (item.quantity || 1);
+                }
+              });
+            });
+          }
+
+          handbagData.totalSold    = totalSold;
+          handbagData.totalRevenue = totalRevenue;
+
+        } catch (salesErr) {
+          console.warn(`Error fetching sales for handbag ${doc.id}:`, salesErr);
+          handbagData.totalSold    = 0;
+          handbagData.totalRevenue = 0;
+        }
+
         handbags.push(handbagData);
       }
     }
@@ -207,7 +252,7 @@ const getHandbagById = async (handbagId) => {
     }
 
     handbagData.totalRevenue = totalRevenue;
-    handbagData.totalSold = handbagData.totalQuantity - handbagData.quantity;
+    handbagData.totalSold    = salesHistorySnap.docs.reduce((sum, d) => sum + (d.data().quantity || 1), 0);
 
     // Get reviews
     const reviewsRef = firestore.collection('handbags').doc(handbagId).collection('reviews');

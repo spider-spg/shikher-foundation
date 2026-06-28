@@ -13,10 +13,8 @@ const {
   getBookById,
   updateBook,
   deleteBook,
-  getBookBorrowHistory,
   addBook,
-  getBookByISBN,
-  addBookStock,
+    addBookStock,
   getAllHandbags,
   getHandbagById,
   updateHandbag,
@@ -30,22 +28,14 @@ const {
   checkExpiredOrders,
   getAllDonations,
   updateDonationStatus,
-  getBookDonations,
-  updateBookDonationStatus,
-  removeBookDonationFromLibrary,
-  deleteBookDonation,
   getAllBookRequests,
   updateBookRequestStatus,
   getRecentActivities,
   getTopBooks,
   getTopHandbags
-} = require('../controllers/adminController');
+} = require('../controllers/adminController_dashboard');
 
-// Import OTP functions from order controller
-const {
-  sendPickupOTP,
-  verifyPickupOTP
-} = require('../controllers/orderController');
+// OTP pickup verification removed — admin marks orders as picked up directly via status update
 
 // Apply auth and admin middleware to all routes
 router.use(authMiddleware, adminMiddleware);
@@ -59,26 +49,6 @@ router.get('/dashboard', getDashboard);
 // @desc    Get all books for admin
 // @access  Private (Admin only)
 router.get('/books', getAllBooks);
-
-// @route   GET /api/admin/book-donations
-// @desc    Get all book donations for admin
-// @access  Private (Admin only)
-router.get('/book-donations', getBookDonations);
-
-// @route   PUT /api/admin/book-donations/:id/status
-// @desc    Update book donation status
-// @access  Private (Admin only)
-router.put('/book-donations/:id/status', updateBookDonationStatus);
-
-// @route   DELETE /api/admin/book-donations/:id/remove-from-library
-// @desc    Remove book donation from library
-// @access  Private (Admin only)
-router.delete('/book-donations/:id/remove-from-library', removeBookDonationFromLibrary);
-
-// @route   DELETE /api/admin/book-donations/:id
-// @desc    Delete book donation
-// @access  Private (Admin only)
-router.delete('/book-donations/:id', deleteBookDonation);
 
 // @route   GET /api/admin/books/:id
 // @desc    Get single book by ID
@@ -98,15 +68,7 @@ router.put('/books/:id',
 // @access  Private (Admin only)
 router.delete('/books/:id', deleteBook);
 
-// @route   GET /api/admin/books/:id/borrow-history
-// @desc    Get book borrow history
 // @access  Private (Admin only)
-router.get('/books/:id/borrow-history', getBookBorrowHistory);
-
-// @route   GET /api/admin/books/isbn/:isbn
-// @desc    Get book by ISBN
-// @access  Private (Admin only)
-router.get('/books/isbn/:isbn', getBookByISBN);
 
 // @route   POST /api/admin/books
 // @desc    Add new book
@@ -179,15 +141,7 @@ router.put('/orders/:id/status', updateOrderStatus);
 // @access  Private (Admin only)
 router.post('/orders/check-expired', checkExpiredOrders);
 
-// @route   POST /api/admin/orders/:id/send-pickup-otp
-// @desc    Send OTP for pickup verification
-// @access  Private (Admin only)
-router.post('/orders/:id/send-pickup-otp', sendPickupOTP);
-
-// @route   POST /api/admin/orders/:id/verify-pickup
-// @desc    Verify pickup OTP and mark order as picked up
-// @access  Private (Admin only)
-router.post('/orders/:id/verify-pickup', verifyPickupOTP);
+// Pickup is now confirmed by admin via PUT /api/admin/orders/:id/status with status=PICKED_UP
 
 // @route   GET /api/admin/donations
 // @desc    Get all donations for admin

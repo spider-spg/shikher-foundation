@@ -93,11 +93,6 @@ export const authAPI = {
 export const booksAPI = {
   getBooks: (params) => API.get('/books', { params }),
   getBook: (id) => API.get(`/books/${id}`),
-  borrowBook: (id, data) => API.post(`/books/${id}/borrow`, data),
-  returnBook: (id) => API.post(`/books/${id}/return`),
-  getMyShelf: () => API.get('/books/my-shelf'),
-  getGenres: () => API.get('/books/genres'),
-  getBorrowingHistory: () => API.get('/books/history'),
 };
 
 export const handbagsAPI = {
@@ -199,9 +194,6 @@ export const adminAPI = {
   getOrders: () => API.get('/orders'),
   getAllDonations: (params) => API.get('/admin/donations', { params }),
   updateDonationStatus: (id, data) => API.put(`/admin/donations/${id}/status`, data),
-  getAllBookDonations: (params) => API.get('/admin/book-donations', { params }),
-  updateBookDonationStatus: (id, data) => API.put(`/admin/book-donations/${id}/status`, data),
-  addToLibrary: (id, data) => API.post(`/admin/book-donations/${id}/add-to-library`, data),
   addBook: (data) => {
     const formData = new FormData();
     
@@ -251,8 +243,7 @@ export const adminAPI = {
   getAllDonations: (params) => API.get('/admin/donations', { params }),
   updateDonationStatus: (id, data) => API.put(`/admin/donations/${id}/status`, data),
   // Google Books integration methods
-  getBookByISBN: (isbn) => API.get(`/admin/books/isbn/${isbn}`),
-  addBookStock: (id, data) => API.put(`/admin/books/${id}/add-stock`, data),
+    addBookStock: (id, data) => API.put(`/admin/books/${id}/add-stock`, data),
   // Generic methods for Google Books API integration
   get: (url, config) => API.get(url, config),
   post: (url, data, config) => API.post(url, data, config),

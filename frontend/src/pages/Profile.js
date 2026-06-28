@@ -8,6 +8,7 @@ import {
   FaEye,
   FaEyeSlash,
   FaShieldAlt,
+  FaPhone,
   FaBook,
   FaShoppingBag,
   FaDonate
@@ -46,7 +47,7 @@ const Profile = () => {
     totalSpent: 0
   });
 
-  const { user: authUser, updateProfile } = useAuth();
+  const { user: authUser, syncUser } = useAuth();
 
   useEffect(() => {
     fetchUserProfile();
@@ -60,9 +61,9 @@ const Profile = () => {
       const userData = response.data.user;
       setUser(userData);
       setProfileData({
-        name: userData.name || '',
+        name:  userData.name  || '',
         email: userData.email || '',
-        phone: userData.phone || ''
+        phone: userData.phone || userData.phoneNumber || ''
       });
     } catch (error) {
       console.error('Error fetching profile:', error);
@@ -106,8 +107,10 @@ const Profile = () => {
       
       if (response.data.success) {
         toast.success('Profile updated successfully');
-        setUser(response.data.user);
-        // Update local user state - no need to call updateProfile here as it's already handled by the API response
+        const updatedUser = response.data.user;
+        setUser(updatedUser);
+        // Sync global AuthContext so navbar/header reflect new name/email immediately
+        if (syncUser) syncUser(updatedUser);
         setEditing(false);
       }
     } catch (error) {
@@ -182,9 +185,9 @@ const Profile = () => {
 
   const cancelEditing = () => {
     setProfileData({
-      name: user?.name || '',
+      name:  user?.name  || '',
       email: user?.email || '',
-      phone: user?.phone || ''
+      phone: user?.phone || user?.phoneNumber || ''
     });
     setEditing(false);
   };
@@ -277,6 +280,7 @@ const Profile = () => {
                           className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                         />
                       </div>
+                      <p className="mt-1 text-xs text-amber-600">⚠️ Changing your email will also update your login email.</p>
                     </div>
                     
                     <div>
@@ -333,7 +337,7 @@ const Profile = () => {
                         <div className="font-semibold text-gray-900">{user?.name}</div>
                       </div>
                     </div>
-                    
+
                     <div className="flex items-center space-x-3">
                       <FaEnvelope className="text-gray-400" />
                       <div>
@@ -341,7 +345,14 @@ const Profile = () => {
                         <div className="font-semibold text-gray-900">{user?.email}</div>
                       </div>
                     </div>
-                    
+
+                    <div className="flex items-center space-x-3">
+                      <FaPhone className="text-gray-400" />
+                      <div>
+                        <div className="text-sm text-gray-500">Phone Number</div>
+                        <div className="font-semibold text-gray-900">{user?.phone || user?.phoneNumber || '—'}</div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

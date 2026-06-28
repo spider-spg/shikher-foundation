@@ -15,6 +15,7 @@ const Signup = () => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    phoneNumber: '',
     password: '',
     confirmPassword: ''
   });
@@ -55,6 +56,17 @@ const Signup = () => {
       return false;
     }
     
+    // Phone validation
+    if (!formData.phoneNumber.trim()) {
+      toast.error('Please enter your phone number');
+      return false;
+    }
+
+    if (!/^[6-9]\d{9}$/.test(formData.phoneNumber.trim())) {
+      toast.error('Please enter a valid 10-digit Indian mobile number');
+      return false;
+    }
+
     // Password validation
     if (!formData.password) {
       toast.error('Please create a password');
@@ -102,11 +114,12 @@ const Signup = () => {
       const result = await signup({
         name: formData.name.trim(),
         email: formData.email.toLowerCase().trim(),
+        phoneNumber: formData.phoneNumber.trim(),
         password: formData.password
       });
       
       if (result.success) {
-        toast.success('Welcome to Shikher Foundation! Your account has been created successfully');
+        toast.success('Welcome to Shikher Foundations! Your account has been created successfully');
         navigate('/');
       } else {
         // Error message already shown by AuthContext
@@ -135,7 +148,7 @@ const Signup = () => {
         {/* Header */}
         <div className="text-center">
           <Link to="/" className="text-3xl font-bold text-gradient">
-            Shikher Foundation
+            Shikher Foundations
           </Link>
           <h2 className="mt-6 text-3xl font-extrabold text-gray-900">
             Create Account
@@ -190,6 +203,30 @@ const Signup = () => {
                   placeholder="Enter your email"
                 />
               </div>
+            </div>
+
+            {/* Phone Number Field */}
+            <div>
+              <label htmlFor="phoneNumber" className="block text-sm font-medium text-gray-700 mb-2">
+                Phone Number
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <FaPhone className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  id="phoneNumber"
+                  name="phoneNumber"
+                  type="tel"
+                  required
+                  value={formData.phoneNumber}
+                  onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value.replace(/\D/, '') })}
+                  maxLength={10}
+                  className="appearance-none relative block w-full pl-10 pr-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
+                  placeholder="10-digit mobile number"
+                />
+              </div>
+              <p className="mt-1 text-xs text-gray-500">Used by NGO to contact you</p>
             </div>
 
             {/* Password Field */}

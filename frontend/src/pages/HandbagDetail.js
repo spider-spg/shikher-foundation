@@ -1,36 +1,115 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { FaArrowLeft, FaHeart, FaShare, FaShoppingCart } from 'react-icons/fa';
+import PhoneLink from '../components/PhoneLink';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import {
+  FaArrowLeft, FaShoppingCart, FaCheckCircle,
+  FaTimes, FaExclamationTriangle, FaHandPaper
+} from 'react-icons/fa';
 import { useCart } from '../context/CartContext';
-import api, { getImageUrl } from '../utils/api';
+import { useAuth } from '../context/AuthContext';
+import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/LoadingSpinner';
+import api from '../utils/api';
 
+const NGO_PHONE = '+91-9324335478';
+
+// ── Confirm Modal ─────────────────────────────────────────────────────────────
+const AddToCartModal = ({ handbag, onConfirm, onCancel, loading }) => {
+  if (!handbag) return null;
+  const formatPrice = (p) =>
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(p || 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+          <h2 className="text-lg font-bold text-gray-900">Add to Cart?</h2>
+          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600"><FaTimes /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Handbag summary */}
+          <div className="flex items-center gap-3">
+            <div className="w-14 h-14 rounded-lg overflow-hidden bg-purple-100 flex-shrink-0">
+              {handbag.imageData || handbag.image ? (
+                <img src={handbag.imageData || handbag.image} alt={handbag.title} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <FaHandPaper className="text-purple-400" />
+                </div>
+              )}
+            </div>
+            <div>
+              <p className="font-semibold text-gray-900">{handbag.title || handbag.name}</p>
+              <p className="text-lg font-bold text-primary-600">{formatPrice(handbag.price)}</p>
+            </div>
+          </div>
+
+          {/* Low stock warning */}
+          {handbag.quantity <= 3 && (
+            <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800 flex items-center gap-2">
+              <FaExclamationTriangle className="flex-shrink-0" />
+              Only <strong>{handbag.quantity}</strong> left in stock!
+            </div>
+          )}
+
+          {/* Reservation info */}
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+            🛒 This item will be <strong>reserved for 7 days</strong> in your cart.
+            Place your order within 7 days or the item returns to stock.
+          </div>
+
+          {/* Pickup reminder */}
+          <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-800">
+            📍 Pickup from NGO centre · Payment collected on pickup · Call <PhoneLink phone={NGO_PHONE} showIcon={false} />
+          </div>
+        </div>
+
+        <div className="p-5 pt-0 flex gap-3">
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="flex-1 btn-primary flex items-center justify-center gap-2 disabled:opacity-60"
+          >
+            {loading ? (
+              <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Adding...</>
+            ) : (
+              <><FaCheckCircle /> Confirm</>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Main Component ────────────────────────────────────────────────────────────
 function HandbagDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { addToCart } = useCart();
-  const [handbag, setHandbag] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [selectedSize, setSelectedSize] = useState('');
-  const [selectedColor, setSelectedColor] = useState('');
+  const { isAuthenticated, isAdmin } = useAuth();
 
-  useEffect(() => {
-    fetchHandbagDetail();
-  }, [id]);
+  const [handbag, setHandbag]           = useState(null);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState('');
+  const [showConfirm, setShowConfirm]   = useState(false);
+  const [addingToCart, setAddingToCart] = useState(false);
+
+  useEffect(() => { fetchHandbagDetail(); }, [id]);
 
   const fetchHandbagDetail = async () => {
     try {
       setLoading(true);
-      const response = await api.get(`/api/handbags/${id}`);
-      setHandbag(response.data);
-      // Set default selections
-      if (response.data.sizes && response.data.sizes.length > 0) {
-        setSelectedSize(response.data.sizes[0]);
-      }
-      if (response.data.colors && response.data.colors.length > 0) {
-        setSelectedColor(response.data.colors[0]);
-      }
+      const response = await api.get(`/handbags/${id}`);
+      setHandbag(response.data.handbag || response.data);
     } catch (error) {
       console.error('Error fetching handbag:', error);
       setError('Failed to load handbag details');
@@ -39,182 +118,155 @@ function HandbagDetail() {
     }
   };
 
-  const handleAddToCart = () => {
-    if (handbag.sizes && handbag.sizes.length > 0 && !selectedSize) {
-      alert('Please select a size');
+  // Step 1: click "Add to Cart" → validate then show modal
+  const handleAddToCartClick = () => {
+    if (!isAuthenticated) {
+      toast.error('Please login to add items to cart');
+      navigate('/login');
       return;
     }
-    if (handbag.colors && handbag.colors.length > 0 && !selectedColor) {
-      alert('Please select a color');
+    if (isAdmin && isAdmin()) {
+      toast.error('Admins cannot purchase products');
       return;
     }
-
-    const cartItem = {
-      ...handbag,
-      selectedSize,
-      selectedColor,
-      type: 'handbag'
-    };
-
-    addToCart(cartItem);
-    alert('Handbag added to cart!');
+    if (!handbag?.quantity || handbag.quantity <= 0) {
+      toast.error('This item is out of stock');
+      return;
+    }
+    setShowConfirm(true);
   };
 
+  // Step 2: user confirms → stock decrements via API
+  const handleConfirmAddToCart = async () => {
+    setAddingToCart(true);
+    try {
+      const result = await addToCart(handbag.id, 1);
+      if (result?.success === false) {
+        toast.error(result.message || 'Failed to add to cart');
+        return;
+      }
+      toast.success('Added to cart! Reserved for 7 days.');
+      setShowConfirm(false);
+      // Reflect stock change locally
+      setHandbag(prev => ({ ...prev, quantity: Math.max(0, (prev.quantity || 1) - 1) }));
+    } catch (error) {
+      toast.error(error.response?.data?.message || error.message || 'Failed to add to cart');
+    } finally {
+      setAddingToCart(false);
+    }
+  };
+
+  const formatPrice = (p) =>
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(p || 0);
+
   if (loading) return <LoadingSpinner />;
-  if (error) return <div className="text-center text-red-500 py-8">{error}</div>;
+  if (error)   return <div className="text-center text-red-500 py-8">{error}</div>;
   if (!handbag) return <div className="text-center py-8">Handbag not found</div>;
 
+  const isAvailable = handbag.quantity > 0 && handbag.isActive !== false;
+
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      {/* Back Button */}
-      <button
-        onClick={() => navigate(-1)}
-        className="flex items-center text-blue-600 hover:text-blue-800 mb-6"
-      >
-        <FaArrowLeft className="mr-2" />
-        Back
-      </button>
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-6xl mx-auto px-4">
+        {/* Back */}
+        <button
+          onClick={() => navigate(-1)}
+          className="flex items-center text-primary-600 hover:text-primary-700 mb-6 gap-2"
+        >
+          <FaArrowLeft /> Back
+        </button>
 
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="md:flex">
-          {/* Product Images */}
-          <div className="md:w-1/2">
-            <div className="aspect-square">
-              <img
-                src={handbag.imageData || '/placeholder-handbag.jpg'}
-                alt={handbag.name}
-                className="w-full h-full object-cover"
-              />
-            </div>
-            {/* Additional images could go here */}
-          </div>
-
-          {/* Product Details */}
-          <div className="md:w-1/2 p-8">
-            <div className="flex justify-between items-start mb-4">
-              <h1 className="text-3xl font-bold text-gray-900">{handbag.name}</h1>
-              <div className="flex space-x-2">
-                <button className="p-2 text-gray-500 hover:text-red-500">
-                  <FaHeart />
-                </button>
-                <button className="p-2 text-gray-500 hover:text-blue-500">
-                  <FaShare />
-                </button>
+        <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+          <div className="md:flex">
+            {/* Image */}
+            <div className="md:w-1/2">
+              <div className="aspect-square bg-gray-100">
+                {handbag.imageData || handbag.image ? (
+                  <img
+                    src={handbag.imageData || handbag.image}
+                    alt={handbag.title || handbag.name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-gradient-to-br from-purple-100 to-pink-100 flex items-center justify-center">
+                    <FaHandPaper className="text-6xl text-purple-300" />
+                  </div>
+                )}
               </div>
             </div>
 
-            <p className="text-2xl font-bold text-blue-600 mb-4">${handbag.price}</p>
+            {/* Details */}
+            <div className="md:w-1/2 p-8">
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                {handbag.title || handbag.name}
+              </h1>
 
-            {/* Category and Stock */}
-            <div className="mb-6">
-              <p className="text-lg text-gray-600 mb-2">Category: {handbag.category}</p>
-              <span
-                className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
-                  handbag.inStock
-                    ? 'bg-green-100 text-green-800'
-                    : 'bg-red-100 text-red-800'
-                }`}
-              >
-                {handbag.inStock ? 'In Stock' : 'Out of Stock'}
-              </span>
-            </div>
+              {handbag.designerName && (
+                <p className="text-gray-500 mb-4">by {handbag.designerName}</p>
+              )}
 
-            {/* Description */}
-            <div className="mb-6">
-              <h3 className="text-xl font-semibold mb-3">Description</h3>
-              <p className="text-gray-700 leading-relaxed">
-                {handbag.description || 'No description available for this handbag.'}
+              <p className="text-3xl font-bold text-primary-600 mb-4">
+                {formatPrice(handbag.price)}
               </p>
-            </div>
 
-            {/* Size Selection */}
-            {handbag.sizes && handbag.sizes.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-3">Size</h3>
-                <div className="flex space-x-2">
-                  {handbag.sizes.map((size) => (
-                    <button
-                      key={size}
-                      onClick={() => setSelectedSize(size)}
-                      className={`px-4 py-2 border rounded-lg ${
-                        selectedSize === size
-                          ? 'border-blue-500 bg-blue-50 text-blue-700'
-                          : 'border-gray-300 hover:border-gray-400'
-                      }`}
-                    >
-                      {size}
-                    </button>
-                  ))}
-                </div>
+              {/* Stock status */}
+              <div className="flex items-center gap-3 mb-6">
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                  isAvailable ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {isAvailable ? `In Stock (${handbag.quantity} available)` : 'Out of Stock'}
+                </span>
+                {handbag.category && (
+                  <span className="bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full">
+                    {handbag.category}
+                  </span>
+                )}
               </div>
-            )}
 
-            {/* Color Selection */}
-            {handbag.colors && handbag.colors.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-3">Color</h3>
-                <div className="flex space-x-2">
-                  {handbag.colors.map((color) => (
-                    <button
-                      key={color}
-                      onClick={() => setSelectedColor(color)}
-                      className={`px-4 py-2 border rounded-lg capitalize ${
-                        selectedColor === color
-                          ? 'border-blue-500 bg-blue-50 text-blue-700'
-                          : 'border-gray-300 hover:border-gray-400'
-                      }`}
-                    >
-                      {color}
-                    </button>
-                  ))}
+              {/* Description */}
+              {handbag.description && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Description</h3>
+                  <p className="text-gray-600 leading-relaxed">{handbag.description}</p>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Material and Features */}
-            {(handbag.material || handbag.features) && (
-              <div className="mb-6">
+              {/* Specs */}
+              <div className="grid grid-cols-2 gap-3 mb-6 text-sm">
                 {handbag.material && (
-                  <div className="mb-2">
-                    <span className="font-semibold text-gray-700">Material:</span>
-                    <span className="text-gray-600 ml-2">{handbag.material}</span>
-                  </div>
+                  <div><span className="font-medium text-gray-700">Material:</span> <span className="text-gray-600">{handbag.material}</span></div>
                 )}
-                {handbag.features && (
-                  <div>
-                    <span className="font-semibold text-gray-700">Features:</span>
-                    <span className="text-gray-600 ml-2">{handbag.features}</span>
-                  </div>
+                {handbag.color && (
+                  <div><span className="font-medium text-gray-700">Color:</span> <span className="text-gray-600">{handbag.color}</span></div>
+                )}
+                {handbag.dimensions && (
+                  <div className="col-span-2"><span className="font-medium text-gray-700">Dimensions:</span> <span className="text-gray-600">{handbag.dimensions}</span></div>
                 )}
               </div>
-            )}
 
-            {/* Action Buttons */}
-            <div className="mt-8">
-              {handbag.inStock ? (
-                <div className="flex space-x-4">
-                  <button
-                    onClick={handleAddToCart}
-                    className="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition duration-200 text-lg font-semibold flex items-center justify-center"
-                  >
-                    <FaShoppingCart className="mr-2" />
-                    Add to Cart
-                  </button>
-                  <button
-                    onClick={() => {
-                      handleAddToCart();
-                      navigate('/checkout');
-                    }}
-                    className="flex-1 bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition duration-200 text-lg font-semibold"
-                  >
-                    Buy Now
-                  </button>
-                </div>
-              ) : (
-                <button
-                  disabled
-                  className="w-full bg-gray-400 text-white px-6 py-3 rounded-lg cursor-not-allowed text-lg font-semibold"
+              {/* Pickup note */}
+              <div className="mb-6 p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm text-orange-800">
+                📍 Items are picked up from the NGO centre. Payment at pickup.
+                Call <PhoneLink phone={NGO_PHONE} showIcon={false} /> to schedule.
+              </div>
+
+              {/* CTA */}
+              {isAdmin && isAdmin() ? (
+                <Link
+                  to={`/admin/handbags/${handbag.id}/edit`}
+                  className="w-full btn-outline text-center block"
                 >
+                  Edit Handbag
+                </Link>
+              ) : isAvailable ? (
+                <button
+                  onClick={handleAddToCartClick}
+                  className="w-full btn-primary flex items-center justify-center gap-3 text-lg py-3"
+                >
+                  <FaShoppingCart /> Add to Cart
+                </button>
+              ) : (
+                <button disabled className="w-full bg-gray-200 text-gray-500 py-3 rounded-lg font-semibold cursor-not-allowed">
                   Out of Stock
                 </button>
               )}
@@ -222,6 +274,16 @@ function HandbagDetail() {
           </div>
         </div>
       </div>
+
+      {/* Confirm Modal */}
+      {showConfirm && (
+        <AddToCartModal
+          handbag={handbag}
+          onConfirm={handleConfirmAddToCart}
+          onCancel={() => setShowConfirm(false)}
+          loading={addingToCart}
+        />
+      )}
     </div>
   );
 }

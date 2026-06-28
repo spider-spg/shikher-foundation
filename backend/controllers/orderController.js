@@ -2,551 +2,161 @@ const {
   createOrder,
   getOrders,
   getOrderById,
-  getOrderByTrackingId,
   updateOrderStatus,
-  processPayment,
   cancelOrder
 } = require('../services/orderService');
+
 const { getUserCart, clearCart } = require('../services/userService');
-const { getHandbagById, updateHandbag } = require('../services/handbagService');
-const Razorpay = require('razorpay');
+const { getHandbagById }         = require('../services/handbagService');
 
-// Initialize Razorpay
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET
-});
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Helper to resolve handbag id from different payload shapes
 const resolveHandbagId = (item) => {
   if (!item) return null;
-  return item.handbagId || item.handbag || item.itemId || item.id || null;
+  // After getUserCart, item.handbag is the populated handbag object
+  if (typeof item.handbag === 'object' && item.handbag !== null) {
+    return item.handbag.id || item.handbag._id || null;
+  }
+  if (typeof item.handbag === 'string') return item.handbag;
+  if (item.handbagId)  return item.handbagId;
+  if (item._id)        return item._id;
+  if (item.id)         return item.id;
+  return null;
 };
-// @desc    Validate stock before payment
-// @route   POST /api/orders/validate-stock
-// @access  Private (Customer only)
-const validateStock = async (req, res) => {
-  try {
-    const { items } = req.body;
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
+// ─── Create handbag order (no payment gateway) ───────────────────────────────
+// @route   POST /api/orders/create-handbag
+// @access  Private (Customer)
+//
+// IMPORTANT: Stock was already decremented when each item was added to the cart
+// (handled by userService.addToCart transaction). We must NOT decrement again here.
+// clearCart() simply deletes the cart docs — it does NOT restore inventory.
+const createHandbagOrder = async (req, res) => {
+  try {
+    const { phoneNumber } = req.body;
+
+    if (!phoneNumber || String(phoneNumber).trim().length < 10) {
       return res.status(400).json({
         success: false,
-        message: 'Items are required'
+        message: 'A valid 10-digit phone number is required'
       });
     }
 
-    // Check stock for each item
-    for (const item of items) {
-      const hid = resolveHandbagId(item);
-      console.log('Validating stock for item:', { handbagId: hid, quantity: item.quantity });
-
-      // If handbagId is missing, fail early with a helpful message
-      if (!hid) {
-        return res.status(400).json({
-          success: false,
-          message: 'One or more items in your cart are no longer available. Please refresh your cart and try again.'
-        });
-      }
-      
-      const handbag = await getHandbagById(hid);
-      
-      if (!handbag || !handbag.isActive) {
-        return res.status(400).json({
-          success: false,
-          message: `Handbag "${handbag?.title || 'Unknown'}" is no longer available. It may have been removed by the seller.`
-        });
-      }
-
-      if (handbag.quantity < item.quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for "${handbag.title}". Available: ${handbag.quantity}, Requested: ${item.quantity}`
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      message: 'Stock validation successful'
+    // Fetch cart (getUserCart auto-expires stale items, restores their stock,
+    // and returns only valid, active cart items)
+    const cartItems    = await getUserCart(req.user.uid);
+    const handbagItems = cartItems.filter(item => {
+      // item.handbag is the populated object after getUserCart
+      return item.handbag && (item.type === 'handbag' || item.handbag.id);
     });
-
-  } catch (error) {
-    console.error('Stock validation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Stock validation failed',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Prepare payment (reserve stock + create Stripe checkout)
-// @route   POST /api/orders/prepare-payment
-// @access  Private (Customer only)
-const preparePayment = async (req, res) => {
-  try {
-    const { items, totalAmount } = req.body;
-
-    // Validate stock again (prevent race conditions)
-    for (const item of items) {
-      const handbag = await getHandbagById(item.handbag);
-      
-      if (!handbag || !handbag.isActive) {
-        return res.status(400).json({
-          success: false,
-          message: `Handbag "${handbag?.title || 'Unknown'}" is no longer available`
-        });
-      }
-
-      if (handbag.quantity < item.quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for "${handbag.title}". Available: ${handbag.quantity}, Requested: ${item.quantity}`
-        });
-      }
-    }
-
-    // For now, temporarily reserve stock when "proceed to pay" is clicked
-    // TODO: In production, implement temporary reservation with expiry
-    for (const item of items) {
-      const hid = resolveHandbagId(item);
-      if (!hid) continue;
-      const handbag = await getHandbagById(hid);
-      if (handbag) {
-        await updateHandbag(hid, {
-          quantity: handbag.quantity - item.quantity
-        });
-      }
-    }
-
-    // Create pending order
-    const orderData = {
-      userId: req.user.uid,
-      userEmail: req.user.email,
-      items: items.map(item => ({
-        handbagId: resolveHandbagId(item),
-        quantity: item.quantity,
-        price: item.price
-      })),
-      totalAmount,
-      status: 'PENDING_PAYMENT'
-    };
-
-    const order = await createOrder(orderData);
-
-    // Create Stripe checkout session
-    // TODO: Implement actual Stripe integration
-    const stripeCheckoutUrl = `${process.env.FRONTEND_URL}/order-success?orderId=${order.id}`;
-
-    res.json({
-      success: true,
-      order,
-      stripeCheckoutUrl,
-      message: 'Payment prepared successfully'
-    });
-
-  } catch (error) {
-    console.error('Prepare payment error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to prepare payment',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Create mock order (bypass payment for testing)
-// @route   POST /api/orders/mock
-// @access  Private (Customer only)
-const createMockOrderController = async (req, res) => {
-  try {
-    const { items, phoneNumber } = req.body;
-
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cart items are required'
-      });
-    }
-
-    if (!phoneNumber) {
-      return res.status(400).json({
-        success: false,
-        message: 'Phone number is required'
-      });
-    }
-
-    let totalAmount = 0;
-    const orderItems = [];
-
-    // Validate and calculate totals
-    for (const item of items) {
-        const hid = resolveHandbagId(item);
-        const handbag = await getHandbagById(hid);
-      
-      if (!handbag || !handbag.isActive) {
-        return res.status(400).json({
-          success: false,
-          message: `Handbag "${handbag?.title || 'Unknown'}" is no longer available`
-        });
-      }
-
-      if (handbag.quantity < item.quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for "${handbag.title}". Available: ${handbag.quantity}, Requested: ${item.quantity}`
-        });
-      }
-
-      const subtotal = handbag.price * item.quantity;
-      orderItems.push({
-        handbagId: handbag.id,
-        title: handbag.title || 'Unknown Item',
-        image: handbag.image || handbag.imageData || handbag.imageUrl || null, // Check all possible image field names
-        quantity: item.quantity,
-        price: handbag.price,
-        subtotal
-      });
-      totalAmount += subtotal;
-    }
-
-    // Update handbag quantities
-    for (const item of items) {
-      const handbag = await getHandbagById(item.handbag);
-      await updateHandbag(item.handbag, {
-        quantity: handbag.quantity - item.quantity
-      });
-    }
-
-    // Create simplified order
-    const pickupDeadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
-    const orderData = {
-      userId: req.user.uid,
-      userEmail: req.user.email,
-      phoneNumber,
-      items: orderItems,
-      totalAmount,
-      shippingAddress: {
-        fullName: "Mock Test User",
-        address: "Test Address",
-        city: "Test City",
-        state: "Test State",
-        zipCode: "123456",
-        phone: phoneNumber
-      },
-      paymentMethod: 'mock',
-      paymentStatus: 'COMPLETED',
-      status: 'PAID_PENDING_PICKUP',
-      orderStatus: 'PAID_PENDING_PICKUP',
-      pickupDeadline,
-      notes: 'Mock order for testing - payment bypassed'
-    };
-
-    const order = await createOrder(orderData);
-
-    res.status(201).json({
-      success: true,
-      order,
-      message: 'Mock order created successfully'
-    });
-
-  } catch (error) {
-    console.error('Mock order creation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create mock order',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Create order from cart
-// @route   POST /api/orders/create
-// @access  Private (Customer only)
-const createOrderController = async (req, res) => {
-  try {
-    const { shippingAddress, pickupPhone, paymentMethod = 'razorpay' } = req.body;
-
-    // Validate input depending on flow: shippingAddress (delivery) or pickupPhone (pickup-only)
-    if (shippingAddress && Object.keys(shippingAddress).length > 0) {
-      const requiredFields = ['fullName', 'address', 'city', 'state', 'zipCode', 'phone'];
-      for (const field of requiredFields) {
-        if (!shippingAddress[field]) {
-          return res.status(400).json({
-            success: false,
-            message: `${field} is required in shipping address`
-          });
-        }
-      }
-    } else {
-      // pickup-only flow requires a phone number
-      if (!pickupPhone || String(pickupPhone).trim().length < 10) {
-        return res.status(400).json({
-          success: false,
-          message: 'pickupPhone is required for pickup orders and must be a valid phone number'
-        });
-      }
-    }
-
-    // Get user's cart
-    const cartItems = await getUserCart(req.user.uid);
-    const handbagItems = cartItems.filter(item => item.type === 'handbag');
 
     if (!handbagItems || handbagItems.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cart is empty'
-      });
+      return res.status(400).json({ success: false, message: 'Your cart is empty' });
     }
 
-    // Validate cart items availability and prepare order items
+    // Build order items from cart (stock already reserved — just validate data)
     const orderItems = [];
-    let totalAmount = 0;
+    let totalAmount  = 0;
 
     for (const cartItem of handbagItems) {
-      const hid = resolveHandbagId(cartItem);
-      if (!hid) {
+      const hb = typeof cartItem.handbag === 'object' ? cartItem.handbag : null;
+      if (!hb) {
         return res.status(400).json({
           success: false,
-          message: 'One or more items in your cart are invalid. Please refresh your cart and try again.'
-        });
-      }
-      const handbag = await getHandbagById(hid);
-      
-      if (!handbag || !handbag.isActive) {
-        return res.status(400).json({
-          success: false,
-          message: `Handbag "${handbag?.title || 'Unknown'}" is no longer available`
+          message: 'One or more cart items are invalid. Please refresh your cart.'
         });
       }
 
-      if (handbag.quantity < cartItem.quantity) {
+      if (!hb.isActive && hb.isActive !== undefined) {
         return res.status(400).json({
           success: false,
-          message: `Insufficient quantity for "${handbag.title}". Available: ${handbag.quantity}, Requested: ${cartItem.quantity}`
+          message: `"${hb.title || 'A handbag'}" is no longer available`
         });
       }
 
-      const subtotal = handbag.price * cartItem.quantity;
+      const subtotal = (hb.price || 0) * cartItem.quantity;
       orderItems.push({
-        handbagId: handbag.id,
-        title: handbag.title,
-        image: handbag.image || handbag.imageData || handbag.imageUrl || null, // Check all possible image field names
-        quantity: cartItem.quantity,
-        price: handbag.price,
+        handbagId: hb.id,
+        title:     hb.title || hb.name,
+        image:     hb.imageData || hb.image || hb.imageUrl || null,
+        quantity:  cartItem.quantity,
+        price:     hb.price || 0,
         subtotal
       });
       totalAmount += subtotal;
     }
 
-    // Calculate shipping and tax
-    const shippingCost = totalAmount > 1000 ? 0 : 50; // Free shipping above ₹1000
-    const tax = totalAmount * 0.18; // 18% GST
-    const finalAmount = totalAmount + shippingCost + tax;
-
-    // Create order data
+    // Persist order with status PENDING_PICKUP
+    const pickupDeadline = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const orderData = {
-      userId: req.user.uid,
-      userEmail: req.user.email,
-      items: orderItems,
-      totalAmount: finalAmount,
-      paymentMethod,
-      shippingCost,
-      tax
+      userId:         req.user.uid,
+      userEmail:      req.user.email,
+      items:          orderItems,
+      totalAmount,
+      phoneNumber:    String(phoneNumber).trim(),
+      orderStatus:    'PAID_PENDING_PICKUP',
+      status:         'PAID_PENDING_PICKUP',
+      orderType:      'handbag',
+      pickupDeadline, // 7 days to pick up
+      createdAt:      new Date()
     };
 
-    // Attach shipping or pickup contact
-    if (shippingAddress && Object.keys(shippingAddress).length > 0) {
-      orderData.shippingAddress = shippingAddress;
-    } else {
-      orderData.pickupPhone = pickupPhone;
-    }
-
-    // Create order using service
     const order = await createOrder(orderData);
 
-    // If payment method is Razorpay, create Razorpay order
-    let razorpayOrder = null;
-    if (paymentMethod === 'razorpay') {
-      try {
-        razorpayOrder = await razorpay.orders.create({
-          amount: Math.round(finalAmount * 100), // Amount in paise
-          currency: 'INR',
-          receipt: order.id,
-          notes: {
-            orderId: order.id,
-            userId: req.user.uid
-          }
-        });
-
-        // Update order with Razorpay payment ID
-        await updateOrderStatus(order.id, {
-          'paymentInfo.paymentId': razorpayOrder.id
-        });
-
-      } catch (razorpayError) {
-        console.error('Razorpay error:', razorpayError);
-        return res.status(500).json({
-          success: false,
-          message: 'Error creating payment order'
-        });
-      }
-    }
-
-    // Clear the user's cart after successful order creation
+    // Clear cart docs (does NOT restore inventory — stock stays decremented)
     await clearCart(req.user.uid);
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: 'Order created successfully',
-      order,
-      razorpayOrder
+      message: 'Order placed successfully. Coordinate with the NGO to schedule your pickup.',
+      order
     });
 
   } catch (error) {
-    console.error('Create order error:', error);
-    res.status(500).json({
+    console.error('createHandbagOrder error:', error);
+    return res.status(500).json({
       success: false,
-      message: 'Error creating order',
+      message: 'Failed to place order',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// @desc    Verify payment and complete order
-// @route   POST /api/orders/:id/verify-payment
-// @access  Private (Customer only)
-const verifyPayment = async (req, res) => {
-  try {
-    const { razorpay_payment_id, razorpay_order_id, razorpay_signature } = req.body;
-
-    if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing payment verification data'
-      });
-    }
-
-    // Find order
-    const order = await getOrderById(req.params.id);
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
-    if (order.userId !== req.user.uid) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to access this order'
-      });
-    }
-
-    // Verify payment signature
-    const crypto = require('crypto');
-    const body = razorpay_order_id + '|' + razorpay_payment_id;
-    const expectedSignature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-      .update(body.toString())
-      .digest('hex');
-
-    if (expectedSignature !== razorpay_signature) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid payment signature'
-      });
-    }
-
-    // Process payment completion
-    const updatedOrder = await processPayment(req.params.id, {
-      paymentId: razorpay_payment_id,
-      paymentMethod: 'razorpay',
-      paymentStatus: 'completed'
-    });
-
-    // Clear user's cart after successful payment to ensure items are removed server-side
-    try {
-      await clearCart(req.user.uid);
-    } catch (clearErr) {
-      console.warn('verifyPayment: failed to clear cart for user', req.user.uid, clearErr);
-      // don't fail the whole request if cart clearing fails
-    }
-
-    // Defensive: paymentInfo may be missing depending on service implementation or webhook updates
-    if (!updatedOrder) {
-      console.error('Verify payment: processPayment returned undefined for order', req.params.id);
-      return res.status(500).json({ success: false, message: 'Failed to process payment' });
-    }
-
-    if (!updatedOrder.paymentInfo) {
-      console.warn('Verify payment: updatedOrder.paymentInfo is undefined', { orderId: updatedOrder.id });
-    }
-
-    const paymentStatusValue = updatedOrder.paymentInfo?.paymentStatus || updatedOrder.paymentInfo?.status || 'unknown';
-
-    res.json({
-      success: true,
-      message: 'Payment verified and order completed successfully',
-      order: {
-        id: updatedOrder.id,
-        orderNumber: updatedOrder.orderNumber,
-        orderStatus: updatedOrder.orderStatus,
-        paymentStatus: paymentStatusValue,
-        trackingId: updatedOrder.trackingId
-      }
-    });
-
-  } catch (error) {
-    console.error('Verify payment error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error verifying payment',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Get user's orders
+// ─── Get current user's orders ────────────────────────────────────────────────
 // @route   GET /api/orders
-// @access  Private (Customer only)
+// @access  Private (Customer)
 const getMyOrders = async (req, res) => {
   try {
     const {
-      page = 1,
-      limit = 10,
+      page      = 1,
+      limit     = 10,
       status,
-      sortBy = 'createdAt',
+      sortBy    = 'createdAt',
       sortOrder = 'desc'
     } = req.query;
 
-    // Build filters
-    const filters = {
-      userId: req.user.uid,
-      userEmail: req.user.email, // Also pass email for backward compatibility
-      page: parseInt(page),
-      limit: parseInt(limit),
+    const result = await getOrders({
+      userId:    req.user.uid,
+      userEmail: req.user.email,
+      page:      parseInt(page),
+      limit:     parseInt(limit),
       status,
       sortBy,
       sortOrder
-    };
+    });
 
-    const result = await getOrders(filters);
-
-    res.json({
-      success: true,
-      count: result.orders.length,
-      total: result.total,
-      totalPages: result.totalPages,
+    return res.json({
+      success:     true,
+      count:       result.orders.length,
+      total:       result.total,
+      totalPages:  result.totalPages,
       currentPage: result.currentPage,
-      orders: result.orders
+      orders:      result.orders
     });
 
   } catch (error) {
-    console.error('Get orders error:', error);
-    res.status(500).json({
+    console.error('getMyOrders error:', error);
+    return res.status(500).json({
       success: false,
       message: 'Error fetching orders',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -554,36 +164,20 @@ const getMyOrders = async (req, res) => {
   }
 };
 
-// @desc    Get single order
+// ─── Get single order ─────────────────────────────────────────────────────────
 // @route   GET /api/orders/:id
-// @access  Private (Customer only)
+// @access  Private (Customer / Admin)
 const getOrder = async (req, res) => {
   try {
     const order = await getOrderById(req.params.id);
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
-    // Check if user owns this order or is admin
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
     if (order.userId !== req.user.uid && req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to access this order'
-      });
+      return res.status(403).json({ success: false, message: 'Not authorized' });
     }
-
-    res.json({
-      success: true,
-      order
-    });
-
+    return res.json({ success: true, order });
   } catch (error) {
-    console.error('Get order error:', error);
-    res.status(500).json({
+    console.error('getOrder error:', error);
+    return res.status(500).json({
       success: false,
       message: 'Error fetching order',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -591,53 +185,34 @@ const getOrder = async (req, res) => {
   }
 };
 
-// @desc    Cancel order
+// ─── Cancel order (by user, before pickup) ───────────────────────────────────
 // @route   PUT /api/orders/:id/cancel
-// @access  Private (Customer only)
+// @access  Private (Customer)
 const cancelOrderController = async (req, res) => {
   try {
     const { reason } = req.body;
-
     const order = await getOrderById(req.params.id);
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
+    if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
     if (order.userId !== req.user.uid) {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to cancel this order'
-      });
+      return res.status(403).json({ success: false, message: 'Not authorized' });
     }
 
-    if (['shipped', 'delivered', 'cancelled'].includes(order.orderStatus)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Order cannot be cancelled at this stage'
-      });
+    const nonCancellable = ['PICKED_UP', 'CANCELLED', 'EXPIRED'];
+    if (nonCancellable.includes(order.orderStatus || order.status)) {
+      return res.status(400).json({ success: false, message: 'This order cannot be cancelled' });
     }
 
-    // Cancel the order using the service
-    const cancelledOrder = await cancelOrder(req.params.id, reason || 'Cancelled by customer');
-
-    res.json({
+    const cancelledOrder = await cancelOrder(req.params.id, null, reason || 'Cancelled by customer');
+    return res.json({
       success: true,
       message: 'Order cancelled successfully',
-      order: {
-        id: cancelledOrder.id,
-        orderNumber: cancelledOrder.orderNumber,
-        orderStatus: cancelledOrder.orderStatus,
-        refund: cancelledOrder.refund
-      }
+      order:   { id: cancelledOrder?.id || req.params.id, status: 'CANCELLED' }
     });
 
   } catch (error) {
-    console.error('Cancel order error:', error);
-    res.status(500).json({
+    console.error('cancelOrder error:', error);
+    return res.status(500).json({
       success: false,
       message: 'Error cancelling order',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -645,105 +220,36 @@ const cancelOrderController = async (req, res) => {
   }
 };
 
-// @desc    Track order
-// @route   GET /api/orders/track/:trackingId
-// @access  Public
-const trackOrder = async (req, res) => {
-  try {
-    const order = await getOrderByTrackingId(req.params.trackingId);
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found with this tracking ID'
-      });
-    }
-
-    res.json({
-      success: true,
-      tracking: {
-        orderNumber: order.orderNumber,
-        trackingId: order.trackingId,
-        orderStatus: order.orderStatus,
-        estimatedDelivery: order.estimatedDelivery,
-        actualDelivery: order.actualDelivery,
-        statusHistory: order.statusHistory,
-        items: order.items,
-        totalAmount: order.totalAmount,
-        orderDate: order.createdAt
-      }
-    });
-
-  } catch (error) {
-    console.error('Track order error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error tracking order',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Update order status
+// ─── Update order status (Admin) ─────────────────────────────────────────────
 // @route   PUT /api/orders/:id/status
-// @access  Private (Customer/Admin)
+// @access  Private (Admin)
 const updateOrderStatusController = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id }     = req.params;
     const { status } = req.body;
 
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Status is required'
-      });
-    }
+    if (!status) return res.status(400).json({ success: false, message: 'Status is required' });
 
-    const validStatuses = [
-      'PENDING',
-      'PROCESSING',
-      'CONFIRMED',
-      'PAID_PENDING_PICKUP',
-      'PICKED_UP',
-      'EXPIRED',
-      'CANCELLED'
-    ];
-
+    const validStatuses = ['PAID_PENDING_PICKUP', 'PENDING_PICKUP', 'PICKED_UP', 'CANCELLED', 'EXPIRED'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: `Invalid status. Valid statuses: ${validStatuses.join(', ')}`
+        message: `Invalid status. Valid: ${validStatuses.join(', ')}`
       });
     }
 
-    // Get current order to verify ownership
     const currentOrder = await getOrderById(id);
-    if (!currentOrder) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
+    if (!currentOrder) return res.status(404).json({ success: false, message: 'Order not found' });
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Admin access required' });
     }
 
-    // Check if user owns the order (or is admin)
-    if (currentOrder.userId !== req.user.uid && req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized to update this order'
-      });
-    }
-
-    const updatedOrder = await updateOrderStatus(id, status);
-
-    res.json({
-      success: true,
-      message: 'Order status updated successfully',
-      order: updatedOrder
-    });
+    await updateOrderStatus(id, status);
+    return res.json({ success: true, message: 'Order status updated', order: { id, orderStatus: status } });
 
   } catch (error) {
-    console.error('Update order status error:', error);
-    res.status(500).json({
+    console.error('updateOrderStatus error:', error);
+    return res.status(500).json({
       success: false,
       message: 'Error updating order status',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -751,174 +257,49 @@ const updateOrderStatusController = async (req, res) => {
   }
 };
 
-// @desc    Send OTP for pickup verification
-// @route   POST /api/admin/orders/:id/send-pickup-otp
-// @access  Private (Admin only)
-const sendPickupOTP = async (req, res) => {
+// ─── Get all orders (Admin) ───────────────────────────────────────────────────
+// @route   GET /api/orders/admin/all  or  GET /api/admin/orders
+// @access  Private (Admin)
+const getAllOrders = async (req, res) => {
   try {
-    const { id } = req.params;
-    console.log('sendPickupOTP called for order:', id);
-    console.log('User role:', req.user?.role);
-
-    // Verify admin access
     if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Admin access required'
-      });
+      return res.status(403).json({ success: false, message: 'Admin access required' });
     }
 
-    // Get order
-    const order = await getOrderById(id);
-    console.log('Order found:', order ? 'Yes' : 'No');
-    if (order) {
-      console.log('Order status:', order.orderStatus);
-    }
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
+    const {
+      page      = 1,
+      limit     = 50,
+      status,
+      sortBy    = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
 
-    // Check if order is in correct status
-    if (order.orderStatus !== 'PAID_PENDING_PICKUP') {
-      return res.status(400).json({
-        success: false,
-        message: 'Order must be in PAID_PENDING_PICKUP status for OTP verification'
-      });
-    }
+    const result = await getOrders({ page: parseInt(page), limit: parseInt(limit), status, sortBy, sortOrder });
 
-    // Generate 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    
-    // Store OTP in order (expires in 15 minutes)
-    const otpData = {
-      otp: otp,
-      generatedAt: new Date(),
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000) // 15 minutes
-    };
-
-    await updateOrderStatus(id, order.orderStatus, '', { pickupOTP: otpData });
-
-    // In a real app, you would send SMS/email here
-    // For demo purposes, we'll just log it
-    console.log(`OTP for order ${id}: ${otp}`);
-    
-    // For development, we can include OTP in response
-    const responseData = {
-      success: true,
-      message: 'OTP sent successfully to customer'
-    };
-
-    // Add OTP to response in development mode
-    if (process.env.NODE_ENV === 'development') {
-      responseData.otp = otp; // Only for development
-    }
-
-    res.json(responseData);
-
-  } catch (error) {
-    console.error('Send pickup OTP error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error sending OTP',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// @desc    Verify pickup OTP and mark order as picked up
-// @route   POST /api/admin/orders/:id/verify-pickup
-// @access  Private (Admin only)
-const verifyPickupOTP = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { otp } = req.body;
-    console.log('verifyPickupOTP called for order:', id, 'with OTP:', otp);
-    console.log('User role:', req.user?.role);
-
-    // Verify admin access
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Admin access required'
-      });
-    }
-
-    if (!otp) {
-      return res.status(400).json({
-        success: false,
-        message: 'OTP is required'
-      });
-    }
-
-    // Get order
-    const order = await getOrderById(id);
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: 'Order not found'
-      });
-    }
-
-    // Check if order has OTP
-    if (!order.pickupOTP || !order.pickupOTP.otp) {
-      return res.status(400).json({
-        success: false,
-        message: 'No OTP found for this order. Please send OTP first.'
-      });
-    }
-
-    // Check if OTP expired
-    if (new Date() > new Date(order.pickupOTP.expiresAt)) {
-      return res.status(400).json({
-        success: false,
-        message: 'OTP has expired. Please request a new OTP.'
-      });
-    }
-
-    // Verify OTP
-    if (order.pickupOTP.otp !== otp) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid OTP. Please check and try again.'
-      });
-    }
-
-    // Mark order as picked up and clear OTP
-    const updatedOrder = await updateOrderStatus(id, 'PICKED_UP', 'OTP verified - pickup confirmed', { 
-      pickupOTP: null,
-      pickedUpAt: new Date()
-    });
-
-    res.json({
-      success: true,
-      message: 'Pickup verified successfully! Order marked as picked up.',
-      order: updatedOrder
+    return res.json({
+      success:     true,
+      count:       result.orders.length,
+      total:       result.total,
+      totalPages:  result.totalPages,
+      currentPage: result.currentPage,
+      orders:      result.orders
     });
 
   } catch (error) {
-    console.error('Verify pickup OTP error:', error);
-    res.status(500).json({
+    console.error('getAllOrders error:', error);
+    return res.status(500).json({
       success: false,
-      message: 'Error verifying OTP',
+      message: 'Error fetching orders',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
 module.exports = {
-  validateStock,
-  preparePayment,
-  createOrder: createOrderController,
-  createMockOrder: createMockOrderController,
-  verifyPayment,
+  createHandbagOrder,
   getMyOrders,
   getOrder,
-  cancelOrder: cancelOrderController,
-  trackOrder,
-  updateOrderStatus: updateOrderStatusController,
-  sendPickupOTP,
-  verifyPickupOTP
+  cancelOrder:         cancelOrderController,
+  updateOrderStatus:   updateOrderStatusController,
+  getAllOrders
 };

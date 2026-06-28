@@ -25,7 +25,7 @@ const Footer = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
           {/* About Section */}
           <div className="space-y-4">
-            <h3 className="text-2xl font-bold text-gradient-white">Shikher Foundation</h3>
+            <h3 className="text-2xl font-bold text-gradient-white">Shikher Foundations</h3>
             <p className="text-gray-300 leading-relaxed">
               Supporting children and families through book distribution, toys and essential item donations.
             </p>
@@ -97,7 +97,7 @@ const Footer = () => {
               <div className="flex items-start space-x-3">
                 <FaMapMarkerAlt className="text-green-400 mt-1 flex-shrink-0" />
                 <div>
-                  <p><strong>Shikher Foundation Pickup Point</strong></p>
+                  <p><strong>Shikher Foundations Pickup Point</strong></p>
                   <p>Jhulelal Society</p>
                   <p>House no 15, Sector 2B, Airoli</p>
                   <p>Navi Mumbai, Maharashtra 400708</p>
@@ -122,25 +122,6 @@ const Footer = () => {
                 </a>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom bar */}
-      <div className="border-t border-gray-800 mt-4">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between text-sm text-gray-400">
-          <div>
-            © {currentYear} Shikher Foundation. All rights reserved.
-          </div>
-          <div>
-            Created by:&nbsp;
-            <a href="https://www.linkedin.com/in/aditi-lad-9006b62a8/" target="_blank" rel="noopener noreferrer" className="hover:text-white underline">
-              Aditi Lad
-            </a>
-            &nbsp;&amp;&nbsp;
-            <a href="https://www.linkedin.com/in/nikunj-maru-a52ba528a/" target="_blank" rel="noopener noreferrer" className="hover:text-white underline">
-              Nikunj Maru
-            </a>
           </div>
         </div>
       </div>

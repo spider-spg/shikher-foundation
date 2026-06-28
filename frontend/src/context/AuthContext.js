@@ -98,7 +98,7 @@ export const AuthProvider = ({ children }) => {
           id: firebaseUser.uid,
           name: userData.name || firebaseUser.displayName,
           email: firebaseUser.email,
-          phone: userData.phone,
+          phone: userData.phoneNumber || userData.phone || '',
           role: userData.role || 'customer',
           ...userData
         };
@@ -181,7 +181,7 @@ export const AuthProvider = ({ children }) => {
           }
         } catch (adminError) {
           console.error('Admin login error:', adminError);
-          // Show specific error for backend issues but don't break the flow
+          dispatch({ type: ActionTypes.SET_LOADING, payload: false });
           if (adminError.message?.includes('timeout') || adminError.response?.status >= 500) {
             toast.error('Our server is currently unavailable. Please try again in a few minutes');
           } else if (adminError.response?.status === 401 || adminError.response?.status === 400) {
@@ -385,12 +385,19 @@ export const AuthProvider = ({ children }) => {
     return state.user?.role === 'customer';
   };
 
+  // Sync user state from outside (e.g. after Profile.js saves its own API call)
+  const syncUser = (updatedUser) => {
+    dispatch({ type: ActionTypes.UPDATE_USER, payload: updatedUser });
+    if (updatedUser) localStorage.setItem('user', JSON.stringify(updatedUser));
+  };
+
   const value = {
     ...state,
     login,
     signup,
     logout,
     updateProfile: updateUserProfile,
+    syncUser,
     changePassword: changeUserPassword,
     refreshToken,
     isAdmin,

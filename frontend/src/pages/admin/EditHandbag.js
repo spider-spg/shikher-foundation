@@ -28,7 +28,8 @@ const EditHandbag = () => {
     { value: 'Small', price: 20 },
     { value: 'Medium', price: 30 },
     { value: 'Large', price: 100 },
-    { value: 'Extra Large', price: 150 }
+    { value: 'Extra Large', price: 150 },
+    { value: 'Custom', price: null }
   ];
 
   useEffect(() => {
@@ -41,10 +42,13 @@ const EditHandbag = () => {
       const response = await api.get(`/admin/handbags/${id}`);
       const handbag = response.data.handbag;
       
+      const knownSizes = sizeOptions.filter(o => o.price !== null).map(o => o.value);
+      const loadedSize = handbag.size && knownSizes.includes(handbag.size) ? handbag.size : (handbag.size || 'Custom');
+
       const handbagData = {
         name: handbag.title || handbag.name || '',
         price: handbag.price || '',
-        size: handbag.size || '',
+        size: loadedSize,
         quantity: handbag.quantity || '',
         images: []
       };
@@ -83,11 +87,12 @@ const EditHandbag = () => {
   const handleSizeChange = (e) => {
     const selectedSize = e.target.value;
     const sizeOption = sizeOptions.find(option => option.value === selectedSize);
-    
+
     setFormData(prev => ({
       ...prev,
       size: selectedSize,
-      price: sizeOption ? sizeOption.price.toString() : ''
+      // For Custom, keep existing price for editing; for presets, auto-fill
+      price: sizeOption && sizeOption.price !== null ? sizeOption.price.toString() : prev.price
     }));
     
     // Clear errors
@@ -312,15 +317,20 @@ const EditHandbag = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Price (Auto-set based on size)
+                    {formData.size === 'Custom' ? 'Price *' : 'Price (Auto-set based on size)'}
                   </label>
                   <input
                     type="number"
                     name="price"
                     value={formData.price}
-                    readOnly
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed"
-                    placeholder="Price will be set based on size"
+                    onChange={handleChange}
+                    readOnly={formData.size !== 'Custom'}
+                    min="0"
+                    step="0.01"
+                    className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${
+                      errors.price ? 'border-red-500' : 'border-gray-300'
+                    } ${formData.size !== 'Custom' ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                    placeholder={formData.size === 'Custom' ? 'Enter custom price' : 'Price will be set based on size'}
                   />
                   {errors.price && <p className="mt-1 text-sm text-red-600">{errors.price}</p>}
                 </div>
@@ -340,7 +350,7 @@ const EditHandbag = () => {
                     <option value="">Select size</option>
                     {sizeOptions.map(option => (
                       <option key={option.value} value={option.value}>
-                        {option.value} - ₹{option.price}
+                        {option.price !== null ? `${option.value} - ₹${option.price}` : `${option.value} (set your own price)`}
                       </option>
                     ))}
                   </select>
