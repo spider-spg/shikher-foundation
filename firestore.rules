@@ -1,102 +1,150 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper functions
+
+    // ─── Helper functions ──────────────────────────────────────────────────
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
     function isAdmin() {
       return isAuthenticated() && request.auth.token.role == 'admin';
     }
-    
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
-    
-    // Users collection - users can only access their own data
+
+    // True if the fields listed in `fields` are unchanged between the
+    // existing document (resource.data) and the incoming write (request.resource.data).
+    // Used to stop users from editing fields they shouldn't (e.g. role, status).
+    function unchangedFields(fields) {
+      return fields.toSet().difference(
+        request.resource.data.diff(resource.data).affectedKeys()
+      ).size() == fields.size();
+    }
+
+    // ─── Users collection ──────────────────────────────────────────────────
     match /users/{userId} {
-      allow read, write: if isOwner(userId) || isAdmin();
-      
-      // Cart subcollection
+      allow read: if isOwner(userId) || isAdmin();
+
+      // On signup: user may create their own doc, but cannot set role to admin
+      allow create: if isOwner(userId)
+                    && request.resource.data.role == 'customer';
+
+      // On profile edits: user can update their own doc, but never role
+      allow update: if isAdmin()
+                    || (isOwner(userId) && unchangedFields(['role']));
+
+      allow delete: if isAdmin();
+
+      // Cart subcollection — fully owned by the user, no admin-only fields here
       match /cart/{cartId} {
         allow read, write: if isOwner(userId) || isAdmin();
       }
-      
-      // Borrow history subcollection
+
+      // Borrow history — read-only for the owner; only admin/backend writes
       match /borrowHistory/{borrowId} {
-        allow read, write: if isOwner(userId) || isAdmin();
-        allow create: if isAuthenticated(); // Allow creating borrow records
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isAdmin();
       }
     }
-    
-    // Books collection - readable by all, writable by admins
+
+    // ─── Books collection ──────────────────────────────────────────────────
     match /books/{bookId} {
       allow read: if true; // Public read access
       allow write: if isAdmin();
-      
-      // Borrow history subcollection
+
       match /borrowHistory/{borrowId} {
-        allow read: if true; // Anyone can see borrow history for transparency
+        allow read: if true; // Public for transparency
         allow write: if isAdmin();
-        allow create: if isAuthenticated(); // Allow users to create borrow records
       }
     }
-    
-    // Handbags collection - readable by all, writable by admins
+
+    // ─── Handbags collection ───────────────────────────────────────────────
     match /handbags/{handbagId} {
       allow read: if true; // Public read access
       allow write: if isAdmin();
-      
-      // Sales history subcollection
+
+      // Sales history — system/admin generated only, never client-writable
       match /salesHistory/{saleId} {
-        allow read: if true; // Public for transparency
+        allow read: if true;
         allow write: if isAdmin();
-        allow create: if isAuthenticated(); // Allow creating sales when purchasing
       }
-      
-      // Reviews subcollection
+
+      // Reviews — a user may only create/edit a review under their own userId
       match /reviews/{reviewId} {
-        allow read: if true; // Public read access
-        allow create: if isAuthenticated(); // Users can add reviews
-        allow update: if isOwner(resource.data.userId) || isAdmin(); // Users can edit their own reviews
-        allow delete: if isAdmin(); // Only admins can delete reviews
+        allow read: if true;
+        allow create: if isAuthenticated()
+                      && request.resource.data.userId == request.auth.uid;
+        allow update: if isAdmin()
+                      || (isOwner(resource.data.userId)
+                          && unchangedFields(['userId']));
+        allow delete: if isAdmin();
       }
     }
-    
-    // Orders collection - accessible by order owner and admins
+
+    // ─── Orders collection ─────────────────────────────────────────────────
+    // All real order creation goes through the backend (Admin SDK, bypasses
+    // these rules). This rule is a defense-in-depth backstop in case anyone
+    // tries to write directly via the client SDK.
     match /orders/{orderId} {
       allow read: if isOwner(resource.data.userId) || isAdmin();
-      allow create: if isAuthenticated(); // Users can create orders
-      allow update: if isAdmin(); // Only admins can update order status
-      allow delete: if isAdmin(); // Only admins can delete orders
+
+      allow create: if isAuthenticated()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.status == 'PENDING_PICKUP';
+
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
-    
-    // Donations collection - accessible by donor and admins
+
+    // ─── Donations collection ──────────────────────────────────────────────
     match /donations/{donationId} {
       allow read: if isOwner(resource.data.donorId) || isAdmin();
-      allow create: if isAuthenticated(); // Users can create donations
-      allow update: if isOwner(resource.data.donorId) || isAdmin(); // Donors can edit pending donations, admins can update status
-      allow delete: if isAdmin(); // Only admins can delete donations
+
+      allow create: if isAuthenticated()
+                    && request.resource.data.donorId == request.auth.uid
+                    && request.resource.data.status == 'pending';
+
+      // Donor may only edit their own donation while it's still pending,
+      // and may never touch the status field themselves (admin-only).
+      allow update: if isAdmin()
+                    || (isOwner(resource.data.donorId)
+                        && resource.data.status == 'pending'
+                        && unchangedFields(['status', 'donorId']));
+
+      allow delete: if isAdmin();
     }
-    
-    // Admin-only collections for configuration and management
+
+    // ─── Book Requests collection ──────────────────────────────────────────
+    match /bookRequests/{requestId} {
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+
+      allow create: if isAuthenticated()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.status == 'PENDING';
+
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── Admin-only collections ────────────────────────────────────────────
     match /config/{configId} {
       allow read, write: if isAdmin();
     }
-    
+
     match /analytics/{analyticsId} {
       allow read, write: if isAdmin();
     }
-    
-    // System logs (read-only for admins)
+
+    // System logs — read-only for admins, never client-writable
     match /logs/{logId} {
       allow read: if isAdmin();
-      allow write: if false; // System-generated only
+      allow write: if false;
     }
-    
-    // Fallback rule - deny all other access
+
+    // ─── Fallback rule — deny everything else ──────────────────────────────
     match /{document=**} {
       allow read, write: if false;
     }
