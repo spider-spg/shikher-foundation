@@ -804,21 +804,16 @@ const updateHandbag = async (req, res) => {
 
     // Handle size and price validation if being updated
     if (updateData.size || updateData.price) {
-      const sizePriceMap = {
-        'Small': 20,
-        'Medium': 30,
-        'Large': 100,
-        'Extra Large': 150
-      };
-
+      const sizePriceMap = { 'Small': 20, 'Medium': 30, 'Large': 100, 'Extra Large': 150 };
+      // Custom size allows any price — only enforce fixed price for preset sizes
       const currentData = handbagDoc.data();
-      const newSize = updateData.size || currentData.size;
+      const newSize  = updateData.size  || currentData.size;
       const newPrice = parseFloat(updateData.price || currentData.price);
 
-      if (sizePriceMap[newSize] && newPrice !== sizePriceMap[newSize]) {
+      if (sizePriceMap[newSize] !== undefined && newPrice !== sizePriceMap[newSize]) {
         return res.status(400).json({
           success: false,
-          message: `Price for ${newSize} handbags must be ₹${sizePriceMap[newSize]}`
+          message: `Price for ${newSize} must be ₹${sizePriceMap[newSize]}`
         });
       }
     }
@@ -900,25 +895,21 @@ const addHandbag = async (req, res) => {
       });
     }
 
-    // Validate size and ensure price matches
-    const sizePriceMap = {
-      'Small': 20,
-      'Medium': 30,
-      'Large': 100,
-      'Extra Large': 150
-    };
-
-    if (!sizePriceMap[size]) {
+    // Validate size
+    const validSizes = ['Small', 'Medium', 'Large', 'Extra Large', 'Custom'];
+    if (!validSizes.includes(size)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid size selected'
       });
     }
 
-    if (parseFloat(price) !== sizePriceMap[size]) {
+    // For preset sizes enforce fixed prices; Custom allows any price
+    const sizePriceMap = { 'Small': 20, 'Medium': 30, 'Large': 100, 'Extra Large': 150 };
+    if (sizePriceMap[size] !== undefined && parseFloat(price) !== sizePriceMap[size]) {
       return res.status(400).json({
         success: false,
-        message: 'Price must match the selected size'
+        message: `Price for ${size} must be ₹${sizePriceMap[size]}`
       });
     }
 
