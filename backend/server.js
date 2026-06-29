@@ -18,6 +18,7 @@ const donationRoutes = require('./routes/donationRoutes');
 const bookRequestRoutes = require('./routes/bookRequestRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 
+// ── Create app FIRST before using it ─────────────────────────────────────────
 const app = express();
 
 // CORS configuration
@@ -41,8 +42,8 @@ app.use(helmet());
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000 // limit each IP to 1000 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 1000
 });
 app.use(limiter);
 
@@ -58,15 +59,26 @@ app.use(
     credentials: true
   }),
   (req, res, next) => {
-    // Allow cross-origin usage of images
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     next();
   },
   express.static(path.join(__dirname, 'uploads'))
 );
 
+// ── Health check endpoints — keeps Render awake via UptimeRobot ───────────────
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
-// Routes
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    status: 'OK',
+    message: 'NGO Portal Backend is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/books', bookRoutes);
 app.use('/api/handbags', handbagRoutes);
@@ -76,17 +88,7 @@ app.use('/api/book-requests', bookRequestRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/book-donations', require('./routes/adminDonationRoutes'));
 
-
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    message: 'NGO Portal Backend is running',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Error handling middleware
+// ── Error handling ────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({
@@ -96,7 +98,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 404 handler
+// ── 404 handler ───────────────────────────────────────────────────────────────
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
@@ -104,9 +106,10 @@ app.use('*', (req, res) => {
   });
 });
 
+// ── Start server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV}`);
+  console.log(`Server running on port ${PORT}`.green);
+  console.log(`Environment: ${process.env.NODE_ENV}`.cyan);
 });
